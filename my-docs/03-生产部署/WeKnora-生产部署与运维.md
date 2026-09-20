@@ -305,7 +305,7 @@ ssh nanning-111 "cd /mnt/data/weknora && C=\$(git rev-parse --short=8 HEAD) && \
 > `config-hash` 只覆盖**运行时**字段（镜像/环境变量/挂载/端口），不含 `build.args` ——
 > 这正是「站点定制只影响构建、不影响运行」的机制保证。
 
-#### 2.4.3 构建踩过的三个坑（都已在脚本里加了防护）
+#### 2.4.3 构建踩过的四个坑（都已在脚本里加了防护）
 
 **坑 1：`APT_MIRROR` 的取值语义 —— 只能给「带 scheme 的 base、不含路径」**
 
@@ -348,6 +348,38 @@ ls /var/lib/apt/lists/ | grep -c _Packages    # 0 = 实际什么都没拿到
 为此脚本新增 `_preflight_build_sources()`：构建前**秒级**校验
 `APT_MIRROR` / `GOPROXY_ARG` / `NPM_REGISTRY` 是否 `200 且不跳转`，不过则中止 ——
 避免把源配置问题拖成 30 分钟后的构建失败。
+
+**坑 4：slim 基镜像没有 CA 证书 —— 换源必须先装 CA，再换源**
+
+`Dockerfile.app` 三个 apt 阶段的**基镜像不同**，有无 CA 因此不同：
+
+| 阶段 | 基镜像 | 自带 CA？ | 换源写法 |
+|---|---|---|---|
+| browserskill | `node:24-bookworm-slim` | ❌ **无** | 需先装 CA（`:16` ARG → `:21` sed） |
+| builder | `golang:1.26-bookworm`（非 slim） | ✅ 有 | 直接换（`:70` → `:84`） |
+| final | `debian:12.12-slim` | ❌ **无** | 需先装 CA（`:161` 注释 → `:168` sed） |
+
+国内若干镜像（实测 `mirrors.tencent.com`、`mirrors.cloud.tencent.com`）的 **http 会 302 跳 https**。
+而 `sed` 只替换**主机名**、不改 scheme，所以换出来的 URI 仍是 `http://…` —— apt 会跟随 302 去访问 https，
+**slim 基镜像没有 CA 证书 ⇒ 握手失败 ⇒ 索引全被忽略**（且 `apt-get update` 仍返回 0，见坑 2）。
+
+上游在 **final 阶段**已经处理对了 —— `Dockerfile.app:161` 的注释就写着
+“First, install ca-certificates without mirror to ensure HTTPS works”：**先用官方源装 CA，再换源**。
+`browserskill` 阶段原先缺这一步（属上游疏漏），2026-09-21 已按**同一模式**补齐。
+
+> 实测（真实基镜像 `node:24-bookworm-slim`，两步各验索引命中数，非推测）：
+
+| 步骤 | 结果 |
+|---|---|
+| 1. 官方源 `apt-get update` + 装 `ca-certificates` | 索引命中 **3**、CA 就位、**150s** |
+| 2. 换腾讯源后再 `apt-get update` | 索引命中 **3**、**仅 2s**（此时 apt 能跟随 302 走 https） |
+
+> **代价与收益**：必然要跑一遍官方源（约 150s）装 CA；收益是该阶段装 `build-essential` / `cmake` /
+> `pkg-config` 等约 500MB 从「走 deb.debian.org」变为「走腾讯源」—— 改动前这一阶段实测
+> **1539s 仍未装完**，是当时最长的单项瓶颈。
+
+> **判断某阶段能不能直接用国内镜像，要先看它的基镜像有没有 CA** —— 这与坑 3 是同一类错误的两个面：
+> 坑 3 是「用错载体测源速度」，本坑是「用错载体判断源可用性」。**判据必须落在该阶段真实使用的基镜像上。**
 
 ### 2.5 改 `.env` 后的生效方式
 
@@ -507,6 +539,9 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 
 前 4 次失败全部出在**构建期国际网络依赖**上，逐项定位并解决后第 5 次成功。
 
+> 2026-09-21 又补齐了表格中第 2 项（`browserskill` 阶段的 apt 换源，见 2.4.3 坑 4）——
+> 该项此前是唯一「未处理、只靠官方源硬扛」的依赖。
+
 **结果核对（全部实测）**
 
 | 项 | 结果 |
@@ -523,7 +558,7 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 | # | 依赖 | 官方默认源 | 本网络实测 | 采用的替代 |
 |---|---|---|---|---|
 | 1 | apt（docreader 两阶段 / app builder+final） | deb.debian.org | 4.6~9MB/s（但构建内会抖动到很慢） | `https://mirrors.tencent.com`（差异[3]） |
-| 2 | apt（app **browserskill** 阶段） | deb.debian.org | 慢（上游未换源，**疏漏**） | 暂未处理，能过 |
+| 2 | apt（app **browserskill** 阶段） | deb.debian.org | 改动前实测 **1539s 未装完** | 同 `APK_MIRROR_ARG`（`mirrors.tencent.com`），**但须先装 CA 再换源** —— 见 2.4.3 坑 4 |
 | 3 | Go modules | proxy.golang.org | 不可达 | `goproxy.cn`（差异[1]） |
 | 4 | npm（frontend / browserskill pnpm） | registry.npmjs.org | 不可达 | `registry.npmmirror.com`（差异[2][7]） |
 | 5 | pip（uv 安装器 + 依赖） | pypi | 1.4MB/s ✅ | 无需处理 |
