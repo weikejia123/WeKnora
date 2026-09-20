@@ -281,38 +281,70 @@ done
 #      https 可用；而裸 debian:12.12-slim 无 CA，https 必失败。
 #      ★ 用错基镜像做探测会得出相反结论（本次先误判为"必须用 http"）。
 _check_url_ok() {
-  local url="$1" name="$2" hdr code loc
-  hdr=$(curl -s -D - -o /dev/null --max-time 8 "$url" 2>/dev/null || true)
-  code=$(printf '%s' "$hdr" | head -1 | awk '{print $2}')
-  loc=$(printf '%s' "$hdr" | awk 'tolower($1)=="location:"{print $2}' | head -1 | tr -d '\r')
-  if [ "$code" = "200" ]; then
-    echo "    ✔ $name 可用（200 且不跳转）"
-    return 0
+  local url="$1" name="$2" expect="${3:-}" final body
+  # 必须**跟随重定向**再判：apt / npm / go 客户端都会跟随 302，
+  # 只看第一跳会把可用源误判为不可用（我犯过一次）。
+  final=$(curl -sL -o /dev/null -w '%{http_code}' --max-time 12 "$url" 2>/dev/null || echo 000)
+  if [ "$final" != "200" ]; then
+    echo "    ✘ $name 不可用：跟随重定向后 HTTP $final"
+    echo "        $url"
+    return 1
   fi
-  echo "    ✘ $name 不可用：HTTP ${code:-无响应}  $url"
-  [ -n "$loc" ] && echo "       跳转到 $loc —— 需确认实际使用该源的基镜像是否自带 CA 证书"
-  return 1
+  # 必须**校验内容**：只看状态码会误判 —— 源路径拼错时也可能返回 200 的错误页。
+  # 对 apt 的 Release 文件校验发行版代号，才能真正证明「这个 URI 是有效的 apt 源」。
+  if [ -n "$expect" ]; then
+    body=$(curl -sL --max-time 12 "$url" 2>/dev/null | head -c 4096)
+    case "$body" in
+      *"$expect"*) ;;
+      *) echo "    ✘ $name 内容异常：响应中未出现 '$expect'（源路径可能拼错）"
+         echo "        $url"
+         return 1 ;;
+    esac
+  fi
+  echo "    ✔ $name 可用（200${expect:+，内容含 $expect}）"
+  return 0
 }
 
 _preflight_build_sources() {
-  local apt goproxy npm rc=0
+  local apt apk goproxy npm rc=0
   apt=$($DC config 2>/dev/null | awk '/^ *APT_MIRROR:/{print $2; exit}')
+  apk=$($DC config 2>/dev/null | awk '/^ *APK_MIRROR_ARG:/{print $2; exit}')
   goproxy=$($DC config 2>/dev/null | awk '/^ *GOPROXY_ARG:/{print $2; exit}')
   npm=$($DC config 2>/dev/null | awk '/^ *NPM_REGISTRY:/{print $2; exit}')
 
   echo "  构建源自检（秒级；避免源配置问题拖到构建 30 分钟后才暴露）..."
+
+  # ① 引导源：app 的 browserskill 与 final 阶段都是 **slim 基镜像、不自带 ca-certificates**，
+  #    换到 https 源之前必须先装 CA，而那一步只能走官方源 ⇒ 官方源本身必须可达。
+  #    （若这条不通，需把引导源也换成「不跳转到 https 的 http 国内源」，见文档 2.4.3 坑 4）
+  _check_url_ok "http://deb.debian.org/debian/dists/bookworm/Release" "引导源 deb.debian.org" "Codename: bookworm" || rc=1
+
+  # ② APT_MIRROR：docreader 两个阶段换源后的主源（值是「带 scheme 的 base、不含路径」）
   if [ -z "$apt" ]; then
-    echo "    · APT_MIRROR 未设置 → 走官方源 deb.debian.org（官方测试过的路径，较慢但可靠）"
+    echo "    · APT_MIRROR 未设置 → docreader 走官方源（较慢但可靠）"
   else
-    _check_url_ok "$apt/debian/dists/bookworm/Release" "APT_MIRROR" || rc=1
+    _check_url_ok "$apt/debian/dists/bookworm/Release" "APT_MIRROR" "Codename: bookworm" || rc=1
   fi
+
+  # ③ APK_MIRROR_ARG：app 三个 apt 阶段换源后的主源。
+  #    ★ 该值只给**主机名**（sed 只替换主机名），故此处补 scheme 才能探测；
+  #    若误填成含 /debian 的完整 URL，会与源里已有的 /debian 拼成 /debian/debian
+  #    → 404（内容校验会拦住，不会放过）。
+  if [ -z "$apk" ]; then
+    echo "    · APK_MIRROR_ARG 未设置 → app 三个 apt 阶段走官方源"
+  else
+    _check_url_ok "http://${apk#*://}/debian/dists/bookworm/Release" "APK_MIRROR_ARG" "Codename: bookworm" || rc=1
+  fi
+
   [ -n "$goproxy" ] && { _check_url_ok "${goproxy%%,*}" "GOPROXY" || rc=1; }
   [ -n "$npm" ]     && { _check_url_ok "$npm" "NPM_REGISTRY" || rc=1; }
 
   if [ "$rc" != "0" ]; then
     echo ""
     echo "    ✘ 构建源自检未通过，已中止（避免白等 30+ 分钟）。"
-    echo "      覆盖方式：编辑 $DIR/.env 里的 APT_MIRROR / GOPROXY_ARG / NPM_REGISTRY 后重试。"
+    echo "      覆盖方式：编辑 $DIR/.env 里的"
+    echo "        APT_MIRROR / APK_MIRROR_ARG / GOPROXY_ARG / NPM_REGISTRY"
+    echo "      后重试；参数取值语义见 my-docker/docker-compose.yml 文件头。"
     exit 1
   fi
 }
