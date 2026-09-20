@@ -12,6 +12,14 @@ ENV PATH=/usr/local/cargo/bin:$PATH
 # 站点值由 compose 的 build.args 注入（见 my-docker/docker-compose.yml）。
 ARG RUSTUP_DIST_SERVER_ARG=""
 ARG RUSTUP_UPDATE_ROOT_ARG=""
+# 本阶段还会（由 scripts/build_browserskill.sh 发起）做三件依赖国际源的事，
+# 部分网络下会失败或极慢，故同样提供可选中继（留空 = 官方行为，全部由 compose 注入）：
+#   · git clone https://github.com/Tencent/BrowserSkill.git   → GH_PROXY（git insteadOf 改写）
+#   · npx --yes pnpm@… install                                → NPM_REGISTRY_ARG
+#   · cargo build --locked -p bsk                             → CARGO_REGISTRY_ARG（sparse 索引）
+ARG GH_PROXY=""
+ARG NPM_REGISTRY_ARG=""
+ARG CARGO_REGISTRY_ARG=""
 RUN if [ -n "$RUSTUP_DIST_SERVER_ARG" ]; then \
         export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER_ARG" RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT_ARG"; \
     fi && \
@@ -20,7 +28,16 @@ COPY scripts/build_browserskill.sh scripts/browserskill-release.json ./scripts/
 COPY patches/browserskill ./patches/browserskill
 ARG TARGETOS
 ARG TARGETARCH
-RUN bash scripts/build_browserskill.sh /opt/weknora/browserskill "${TARGETOS}/${TARGETARCH}"
+RUN if [ -n "$GH_PROXY" ]; then \
+        git config --global url."${GH_PROXY}https://github.com/".insteadOf "https://github.com/"; \
+    fi && \
+    if [ -n "$CARGO_REGISTRY_ARG" ]; then \
+        mkdir -p "${CARGO_HOME:-/usr/local/cargo}" && \
+        printf '[source.crates-io]\nreplace-with = "mirror"\n[source.mirror]\nregistry = "%s"\n' "$CARGO_REGISTRY_ARG" \
+            >> "${CARGO_HOME:-/usr/local/cargo}/config.toml"; \
+    fi && \
+    if [ -n "$NPM_REGISTRY_ARG" ]; then export npm_config_registry="$NPM_REGISTRY_ARG"; fi && \
+    bash scripts/build_browserskill.sh /opt/weknora/browserskill "${TARGETOS}/${TARGETARCH}"
 
 # Build stage
 FROM golang:1.26-bookworm AS builder
@@ -35,6 +52,8 @@ ARG APK_MIRROR_ARG
 # Rust 工具链下载源（可选，留空 = 官方 static.rust-lang.org）；见 browserskill 阶段的说明
 ARG RUSTUP_DIST_SERVER_ARG=""
 ARG RUSTUP_UPDATE_ROOT_ARG=""
+# cargo crates 索引镜像（可选，留空 = 官方 crates.io）；本阶段 build-anydoc-lib.sh 会真编译
+ARG CARGO_REGISTRY_ARG=""
 
 # 设置Go环境变量
 ENV GOPRIVATE=${GOPRIVATE_ARG}
@@ -88,6 +107,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
         fi && \
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --profile minimal --default-toolchain stable && \
+        if [ -n "$CARGO_REGISTRY_ARG" ]; then \
+            mkdir -p "${CARGO_HOME:-/usr/local/cargo}" && \
+            printf '[source.crates-io]\nreplace-with = "mirror"\n[source.mirror]\nregistry = "%s"\n' "$CARGO_REGISTRY_ARG" \
+                >> "${CARGO_HOME:-/usr/local/cargo}/config.toml"; \
+        fi && \
         ./scripts/build-anydoc-lib.sh; \
     fi
 
