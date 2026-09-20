@@ -1,0 +1,35 @@
+# WeKnora 的 TLS 终端（111 站点专属）
+#
+# 刻意**独立于** my-docker/docker-compose.yml：
+#   那份文件的定位是「官方 docker-compose.yml 的副本 + 最小定制」，要求能与官方**逐行比对**；
+#   在这里加 service 会破坏那个性质，也会让 compose-diff 子命令失效。
+#
+# 用法（在 111 的仓库根 /mnt/data/weknora）：
+#   bash my-docker/tls/gen-certs.sh                    # 首次生成自签 CA 与服务器证书
+#   docker compose -f my-docker/tls/docker-compose.yml up -d
+#   docker compose -f my-docker/tls/docker-compose.yml logs -f
+#
+# 停用（回到纯 http 访问，不影响 WeKnora 本体）：
+#   docker compose -f my-docker/tls/docker-compose.yml down
+services:
+  tls:
+    image: nginx:1.30.3-alpine
+    container_name: weknora-tls
+    restart: unless-stopped
+
+    # host 网络：直接反代宿主 127.0.0.1:41200（frontend 的端口映射）。
+    # 为什么不用容器网络：compose 的网络名是自定义的（weknora_WeKnora-network），
+    # 会随编排变化；走宿主端口与 WeKnora 编排彻底解耦。
+    network_mode: host
+
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 证书只存在于宿主磁盘（不进 git）：私钥绝不能入库
+      - /mnt/data/weknora-tls:/etc/nginx/tls:ro
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--no-check-certificate", "-O", "/dev/null", "https://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
