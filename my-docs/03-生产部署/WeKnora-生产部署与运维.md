@@ -46,6 +46,27 @@
 - 本机 Mac 在 `192.168.55.x` 网段（经 NAT 出去），**无法被 111 反向访问**，直接推文件反而更绕。
 - 110 与 111 在同一内网（实测 ping 0.4ms），Gitea 中转这条链路是稳的。
 
+### 1.1.1 编排文件用哪一份：`my-docker/`
+
+仓库里**有两份 compose**，分工明确：
+
+| 文件 | 归属 | 谁在用 |
+|---|---|---|
+| `docker-compose.yml`（仓库根） | **官方原版，一字不改** | 没人直接用；作为同步上游的基准 |
+| `my-docker/docker-compose.yml` | **站点定制版**（官方副本 + 3 处修改） | **部署一律用它** |
+
+这样做的好处：**同步上游时零冲突** —— 上游怎么改官方那份都不影响我们，
+只需按 `my-docker/` 头部的差异清单逐条核对是否有需要跟进的变化。
+
+差异清单是**单一事实来源**，写在 `my-docker/docker-compose.yml` 的文件头注释里
+（紧贴被改动的代码），`my-docker/README.md` 不重复。
+
+> **调用时必须带 `--project-directory`**：Compose 的相对路径（`build.context` /
+> bind mount / `env_file: .env`）默认按 **compose 文件所在目录** 解析，文件挪进 `my-docker/`
+> 后会全部错位 —— 轻则报 `my-docker/.env 不存在`，重则项目名退化成 `my-docker`
+> 而指向一套**新建的空数据卷**（表现为「数据全没了」）。
+> 部署脚本已把这一串参数封装为 `$DC`，并额外加了项目名硬校验兜底。
+
 ### 1.2 服务器与路径
 
 | 项 | 值 |
@@ -103,6 +124,7 @@
 | `logs [服务]` | 跟踪日志（默认 `app`） | 排查问题 |
 | `restart` | 重启容器 | 改了配置想生效 |
 | `health` | 健康检查 | 快速确认服务可用 |
+| `compose-diff` | 对比官方与 `my-docker/` 的 compose 差异 | **上游更新后**核对；或怀疑 my-docker 过期时 |
 | `shell` | 登录 111 并进入部署目录 | 手工排查 |
 | `down` | 停止容器（**数据卷保留**） | 临时停服 |
 
@@ -174,36 +196,36 @@ ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '
 
 > **`build` 模式耗时较长**：Go 编译 + 前端 npm 构建 + docreader 镜像，首次可能 20~40 分钟（111 是 32 核，比本机快）。之后有构建缓存会快很多。
 
-#### 2.4.1 ⚠️ 111 上构建的前置条件（**尚未满足，首次 build 前必须先做**）
+#### 2.4.1 111 上构建的前置条件（✅ 已由 `my-docker/` 解决）
 
-111 **无法直连** `registry-1.docker.io` 与 `proxy.golang.org`（实测：只有 `goproxy.cn` 可达 200）。
-而构建期有三处必须联网：
+111 **无法直连** `registry-1.docker.io` 与 `proxy.golang.org`。构建期必须联网的四处：
 
-| 步骤 | 依赖 | 当前配置 |
+| 步骤 | 依赖 | 现状 |
 |---|---|---|
-| 拉基础镜像（`golang:1.26-bookworm`、`node:24-bookworm-slim`、`debian:12.12-slim`） | Docker registry | ✅ 走 `daemon.json` 的 `registry-mirrors`（docker.1ms.run 等），可用 |
-| `apt-get` 装包 | Debian 源 | ✅ `.env` 已设 `APK_MIRROR_ARG=mirrors.tencent.com` |
-| `go install` / `go mod download` | Go module proxy | ❌ **未配置** —— 会回落到 `proxy.golang.org`（不可达） |
-| 前端 `npm install` | npm registry | ❌ **未配置** —— 默认 `registry.npmjs.org`（不可达） |
+| 拉基础镜像（`golang:1.26-bookworm`、`node:24-bookworm-slim`、`debian:12.12-slim`） | Docker registry | ✅ 走 `daemon.json` 的 `registry-mirrors`（docker.1ms.run 等） |
+| `apt-get` 装包 | Debian 源 | ✅ `APK_MIRROR_ARG` / `APT_MIRROR` 已配腾讯源 |
+| `go install` / `go mod download` | Go module proxy | ✅ 已由 `my-docker/` 传 `GOPROXY_ARG` |
+| 前端 `npm install` | npm registry | ✅ 已由 `my-docker/` 传 `NPM_REGISTRY` |
 
-**根因**：`docker-compose.yml` 的 `app.build.args` 只传了 `APK_MIRROR_ARG` 与 `WITH_ANYDOC`，
-**没有传 `GOPROXY_ARG`**（`Dockerfile.app:23` 声明了该 ARG，但 compose 没 wire）；
-前端服务虽然支持 `NPM_REGISTRY` 参数（`docker-compose.yml:12` 注释里就写了用法），但没人设。
+**根因**：官方 `docker-compose.yml` 的 `app.build.args` 只传了 `APK_MIRROR_ARG` 与 `WITH_ANYDOC`，
+**没有 wire `GOPROXY_ARG`**（`Dockerfile.app:23` 声明了该 ARG 却没传）；`NPM_REGISTRY` 与 `APT_MIRROR` 同理
+（都声明了、默认空 ⇒ 回落国外源）。仓库**无 `vendor/`**，所以 Go 代理是硬需求。
 
-**需要补的两处**（`docker-compose.yml` 是仓库文件，改动要跟着 fork 走）：
+**解法**：不改官方 compose，改为在 `my-docker/docker-compose.yml` 的三处 build.args 里补默认值
+（详见该文件头部「与官方的差异清单」）。部署脚本已统一使用该文件，**无需再手工配 `.env`**。
 
-```yaml
-# app.build.args 里增加
-- GOPROXY_ARG=${GOPROXY_ARG:-https://goproxy.cn,direct}
-- GOSUMDB_ARG=off
-```
+##### 实测验证（2026-09-20，111 上 compose v5.5.1）
 
-```bash
-# 111 的 .env 里增加（前端构建用）
-NPM_REGISTRY=https://registry.npmmirror.com
-```
+| 验证项 | 方法 | 结果 |
+|---|---|---|
+| 路径语义未错位 | 逐行 diff 官方与 my-docker 的 `docker compose config` | **仅 3 处差异**（= 定制项）；`context` 仍为 `/mnt/data/weknora` |
+| 项目名未变 | `config \| grep '^name:'` | `weknora` ✅ |
+| 数据卷未变 | 对比 `config` 声明的卷 vs `docker volume ls` | `data-files`/`docreader-tmp`/`postgres-data` ↔ `weknora_*` **一一对应** |
+| **不影响运行中的服务** | `config --hash='*'` vs 容器 `com.docker.compose.config-hash` | 5 个服务**全部一致** ⇒ 切换不会触发重建 |
+| 端到端 | 执行 `./deploy/deploy-wkj-dev.sh update` | 通过；容器仍显示 `Up 6 hours`（**未被重建**）、前端 200、后端健康 |
 
-> 仓库里**没有 `vendor/` 目录**，所以 `go mod download` 无法离线完成，这个代理参数是硬需求。
+> `config-hash` 只覆盖**运行时**字段（镜像/环境变量/挂载/端口），不含 `build.args` ——
+> 这正是「站点定制只影响构建、不影响运行」的机制保证。
 
 ### 2.5 改 `.env` 后的生效方式
 
@@ -362,8 +384,8 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 ## 六、待办 / 注意事项
 
 - [ ] **🔴 生产尚未跑你的二开代码**：当前 111 运行的是官方 `2026-09-03` 镜像（`RepoDigests` 非空已证实）。
-      要让 `wkj-dev` 的源码生效，需先补齐 2.4.1 的构建前置条件（`GOPROXY_ARG` + `NPM_REGISTRY`），
-      再执行 `./deploy/deploy-wkj-dev.sh build`（首次约 20~40 分钟）。
+      构建前置条件已就绪（见 2.4.1，已由 `my-docker/` 解决），**下一步只需拍板执行**：
+      `./deploy/deploy-wkj-dev.sh build`（首次约 20~40 分钟；失败会停在 `up -d` 之前，不影响在跑的容器）。
 - [ ] **首次部署后建议做的加固**：把 `DISABLE_REGISTRATION` 改为 `true`（注册完管理员账号之后）。
 - [ ] **备份策略**：目前数据只在 111 单机机械盘，`/mnt/data` 无备份。数据库（`weknora_postgres-data` 卷）应纳入备份。
 - [ ] **`ops/hosts/nanning-111/services.md` 待登记**本服务（端口 41200/41201）。
