@@ -375,8 +375,22 @@ ls /var/lib/apt/lists/ | grep -c _Packages    # 0 = 实际什么都没拿到
 | 2. 换腾讯源后再 `apt-get update` | 索引命中 **3**、**仅 2s**（此时 apt 能跟随 302 走 https） |
 
 > **代价与收益**：必然要跑一遍官方源（约 150s）装 CA；收益是该阶段装 `build-essential` / `cmake` /
-> `pkg-config` 等约 500MB 从「走 deb.debian.org」变为「走腾讯源」—— 改动前这一阶段实测
-> **1539s 仍未装完**，是当时最长的单项瓶颈。
+> `pkg-config` / `git` 等从「走 deb.debian.org」变为「走腾讯源」——
+> 改动前这一阶段实测 **1539s 仍未装完**（当时最长的单项瓶颈）。
+>
+> **端到端构建已实证（2026-09-21，commit `b1c6638b`）**：
+>
+> ```
+> #39 [app browserskill 3/7] RUN ...            总耗时 223s   ← 改动前 1539s 仍未装完
+> #39 2.023  Get:1 http://deb.debian.org/debian         ← 步骤1：官方源 update
+> #39 154.3  Setting up ca-certificates                 ← 步骤1：装 CA 完成（与预演 150s 吻合）
+> 日志内域名统计：deb.debian.org 18 次 / mirrors.tencent.com 779 次   ← 步骤2 换源生效
+> ```
+>
+> 即两段都按预期执行，该阶段由「装不完」变为 **223s 完成**。本次构建总计 16m47s，
+> 结束后核对：二进制内 commit = `b1c6638b`（与 111 上 HEAD 一致）、
+> 数据 `knowledges=2 chunks=81 wiki_pages=33 tenants=1 kbs=1`（与基线逐项一致）、
+> `schema_migrations version=106 dirty=false`、前端/后端均 HTTP 200。
 
 > **判断某阶段能不能直接用国内镜像，要先看它的基镜像有没有 CA** —— 这与坑 3 是同一类错误的两个面：
 > 坑 3 是「用错载体测源速度」，本坑是「用错载体判断源可用性」。**判据必须落在该阶段真实使用的基镜像上。**
@@ -539,8 +553,9 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 
 前 4 次失败全部出在**构建期国际网络依赖**上，逐项定位并解决后第 5 次成功。
 
-> 2026-09-21 又补齐了表格中第 2 项（`browserskill` 阶段的 apt 换源，见 2.4.3 坑 4）——
-> 该项此前是唯一「未处理、只靠官方源硬扛」的依赖。
+> 2026-09-21 又补齐**并验证**了表格中第 2 项（`browserskill` 阶段的 apt 换源，见 2.4.3 坑 4）——
+> 该项此前是唯一「未处理、只靠官方源硬扛」的依赖。至此源矩阵 11 项**全部有对策，且全部经实测**。
+> 二次构建（commit `b1c6638b`）耗时 16m47s，数据与基线一致、二进制内 commit 与 HEAD 一致。
 
 **结果核对（全部实测）**
 
