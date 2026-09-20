@@ -8,18 +8,23 @@
 #   对外端口：41200 (前端) / 41201 (后端 API)
 #
 # 用法：
-#   ./deploy-wkj-dev.sh deploy     首次部署 / 完整部署（幂等，可重复执行）
-#   ./deploy-wkj-dev.sh update     更新：推代码 → 拉取 → 重建容器
-#   ./deploy-wkj-dev.sh build      二开构建：在 111 上构建镜像后重启
-#   ./deploy-wkj-dev.sh status     查看容器状态
-#   ./deploy-wkj-dev.sh logs [svc] 查看日志（默认 app）
-#   ./deploy-wkj-dev.sh restart    重启容器
-#   ./deploy-wkj-dev.sh health     健康检查
-#   ./deploy-wkj-dev.sh shell      登录 111
-#   ./deploy-wkj-dev.sh down       停止容器（保留数据）
+#   ./deploy-wkj-dev.sh deploy      首次部署 / 完整部署（幂等，可重复执行）
+#   ./deploy-wkj-dev.sh update      更新：推代码 → 拉取 → 重建容器
+#   ./deploy-wkj-dev.sh build       二开构建：在 111 上构建镜像后重启
+#   ./deploy-wkj-dev.sh status      查看容器状态
+#   ./deploy-wkj-dev.sh logs [svc]  查看日志（默认 app）
+#   ./deploy-wkj-dev.sh restart     重启容器
+#   ./deploy-wkj-dev.sh health      健康检查
+#   ./deploy-wkj-dev.sh compose-diff 对比官方与 my-docker 的 compose 差异（防过期）
+#   ./deploy-wkj-dev.sh shell       登录 111
+#   ./deploy-wkj-dev.sh down        停止容器（保留数据）
+#
+# ★ 编排文件：一律使用 my-docker/docker-compose.yml（站点定制版），
+#   仓库根的官方 docker-compose.yml 保持原样，同步上游时零冲突。
+#   调用时统一带 --project-directory（保持相对路径按仓库根解析，见下方注释）。
 #
 # ★ 关键区分：deploy/update 用的是「官方预构建镜像」，build 才用「你的二开代码」
-#   docker-compose.yml 里每个服务同时写了 image: 与 build:，共用同一个 tag。
+#   编排文件里每个服务同时写了 image: 与 build:，共用同一个 tag。
 #     · pull  → 拉 registry 官方镜像，覆盖该 tag   ⇒ 源码改动**不生效**
 #     · build → 在 111 上从源码构建，覆盖该 tag   ⇒ 源码改动生效
 #   因此：只改前端/后端源码时，必须用 build；用 update 会把二开镜像换回官方镜像。
@@ -45,6 +50,16 @@ readonly GITEA_CRED_KEY="10.168.1.110%3a13000"  # ~/.git-credentials 中的匹�
 readonly FRONTEND_PORT=41200                    # 前端对外端口
 readonly APP_PORT=41201                         # 后端对外端口
 readonly HEALTH_TIMEOUT=420                     # 健康检查最长等待（秒），首次启动需建表
+
+# ★ 部署一律使用 my-docker/ 下的「站点定制 compose」；仓库根的官方
+#   docker-compose.yml 保持原样，以便同步上游时零冲突。
+#   --project-directory 是**必需**的：Compose 的相对路径（build.context /
+#   bind mount / env_file）默认按 compose 文件所在目录解析，文件放进 my-docker/
+#   后 `context: .` 变成 my-docker/、`env_file: .env` 去找 my-docker/.env。
+#   加 --project-directory 指向仓库根即恢复原语义 —— 已实测与官方配置的
+#   `docker compose config` 输出逐行一致（项目名、数据卷名、路径均不变）。
+readonly COMPOSE_FILE_REL="my-docker/docker-compose.yml"
+readonly DC="docker compose --project-directory $REMOTE_DIR --env-file $REMOTE_DIR/.env -f $REMOTE_DIR/$COMPOSE_FILE_REL"
 
 # 颜色
 readonly C_OK=$'\033[0;32m'; readonly C_ERR=$'\033[0;31m'
@@ -99,6 +114,11 @@ preflight_remote() {
     echo "OK"
   ' >/dev/null 2>&1 || die "111 环境检查失败（docker / compose / /mnt/data 挂载）"
   ok "docker + compose 可用，/mnt/data 已挂载"
+
+  # 站点定制 compose 必须在位（部署一律用它）
+  ssh "$SSH_HOST" "test -f '$REMOTE_DIR/$COMPOSE_FILE_REL'" 2>/dev/null \
+    || die "111 上缺少 $REMOTE_DIR/$COMPOSE_FILE_REL —— 先跑一次 sync_code，或确认 $BRANCH 分支包含 my-docker/"
+  ok "站点定制 compose 在位：$COMPOSE_FILE_REL"
 }
 
 # ------------------------------------------------------------------ 代码同步
@@ -208,9 +228,20 @@ REMOTE_ENV
 compose_up() {
   local mode="${1:-pull}"
   step "④ 启动容器（模式：$mode）"
-  ssh "$SSH_HOST" "DIR='$REMOTE_DIR' MODE='$mode' ALLOW_OVERWRITE='${WKJ_ALLOW_PULL_OVERWRITE:-0}' bash -s" <<'REMOTE_UP'
+  ssh "$SSH_HOST" "DIR='$REMOTE_DIR' MODE='$mode' DC='$DC' ALLOW_OVERWRITE='${WKJ_ALLOW_PULL_OVERWRITE:-0}' bash -s" <<'REMOTE_UP'
 set -e
 cd "$DIR"
+
+# ── 项目名校验（防「数据全没了」）───────────────────────────────────────
+# 项目名决定数据卷名（weknora_postgres-data 等）。若它变成别的值（例如漏了
+# --project-directory 时退化成目录名 my-docker），compose 会去创建一套**全新空卷**，
+# 表现为「库里的数据全没了」——其实数据还在旧卷里。此处硬校验，不符即停。
+PROJ=$(grep -m1 '^COMPOSE_PROJECT_NAME=' .env 2>/dev/null | cut -d= -f2- || true)
+if [ "$PROJ" != "weknora" ]; then
+  echo "  ✘ .env 中 COMPOSE_PROJECT_NAME=[${PROJ:-未设置}]，期望 weknora。"
+  echo "    继续执行会指向另一套数据卷。请修正 $DIR/.env 后重试。"
+  exit 1
+fi
 
 TAG=$(grep -m1 '^WEKNORA_VERSION=' .env 2>/dev/null | cut -d= -f2-); TAG=${TAG:-latest}
 
@@ -232,7 +263,7 @@ done
 
 if [ "$MODE" = "build" ]; then
   echo "  构建镜像（二开模式，耗时较长，可能 20-40 分钟）..."
-  docker compose build
+  $DC build
 elif [ "$local_built" = "1" ] && [ "${ALLOW_OVERWRITE:-0}" != "1" ]; then
   echo ""
   echo "  ⚠ 已阻止 pull —— 111 上存在本地构建的二开镜像。"
@@ -240,10 +271,10 @@ elif [ "$local_built" = "1" ] && [ "${ALLOW_OVERWRITE:-0}" != "1" ]; then
   echo "    现自动改用 build 模式。若确实要回到官方镜像，请加："
   echo "        WKJ_ALLOW_PULL_OVERWRITE=1 ./deploy-wkj-dev.sh update"
   echo ""
-  docker compose build
+  $DC build
 else
   echo "  拉取镜像（--quiet 模式；首次约 5-10 分钟，请耐心等待）..."
-  docker compose pull --quiet
+  $DC pull --quiet
 fi
 
 # ── 阶段一：基础设施 + 后端（不含 frontend）──────────────────────────
@@ -253,7 +284,7 @@ fi
 # → frontend 依赖检查失败并**停在 Created 不再重试**（compose 的固有行为）。
 # 因此先起后端、等它就绪，再起前端。
 echo "  启动基础设施与后端（postgres / redis / docreader / app）..."
-docker compose up -d postgres redis docreader app
+$DC up -d postgres redis docreader app
 
 echo "  等待后端就绪（首次需建库表，最长 600s）..."
 _w=0
@@ -261,7 +292,7 @@ until [ "$(docker inspect WeKnora-app --format '{{.State.Health.Status}}' 2>/dev
   _w=$((_w+5))
   if [ "$_w" -ge 600 ]; then
     echo "  ✘ 后端 600s 内未就绪，最近日志："
-    docker compose logs --tail=30 app
+    $DC logs --tail=30 app
     exit 1
   fi
   sleep 5
@@ -269,10 +300,10 @@ done
 echo "  ✔ 后端已就绪（用时 ${_w}s）"
 
 echo "  启动前端..."
-docker compose up -d frontend
+$DC up -d frontend
 
 echo ""
-docker compose ps --format 'table {{.Name}}\t{{.Status}}'
+$DC ps --format 'table {{.Name}}\t{{.Status}}'
 REMOTE_UP
   ok "容器已启动"
 }
@@ -295,7 +326,7 @@ health_check() {
   done
   [ $i -lt "$HEALTH_TIMEOUT" ] || {
     warn "后端在 ${HEALTH_TIMEOUT}s 内未通过健康检查，最近日志："
-    ssh "$SSH_HOST" "cd $REMOTE_DIR && docker compose logs --tail=30 app" || true
+    ssh "$SSH_HOST" "$DC logs --tail=30 app" || true
     die "健康检查失败"
   }
 
@@ -304,7 +335,7 @@ health_check() {
   fe_state=$(ssh "$SSH_HOST" "docker inspect WeKnora-frontend --format '{{.State.Status}}'" 2>/dev/null || echo "missing")
   if [ "$fe_state" != "running" ]; then
     warn "前端容器状态为 ${fe_state}，尝试拉起..."
-    ssh "$SSH_HOST" "cd $REMOTE_DIR && docker compose up -d frontend" >/dev/null 2>&1 || true
+    ssh "$SSH_HOST" "$DC up -d frontend" >/dev/null 2>&1 || true
     sleep 3
   fi
 
@@ -329,17 +360,17 @@ cmd_update() { preflight_local; sync_code; ensure_env; compose_up pull; health_c
 cmd_build()  { preflight_local; sync_code; ensure_env; compose_up build; health_check; }
 
 cmd_status() {
-  ssh "$SSH_HOST" "cd $REMOTE_DIR 2>/dev/null && docker compose ps || echo '未部署'"
+  ssh "$SSH_HOST" "cd $REMOTE_DIR 2>/dev/null && $DC ps || echo '未部署'"
 }
 
 cmd_logs() {
   local svc="${1:-app}"
-  ssh "$SSH_HOST" "cd $REMOTE_DIR && docker compose logs --tail=200 -f $svc"
+  ssh "$SSH_HOST" "$DC logs --tail=200 -f $svc"
 }
 
 cmd_restart() {
   step "重启容器"
-  ssh "$SSH_HOST" "cd $REMOTE_DIR && docker compose restart"
+  ssh "$SSH_HOST" "$DC restart"
   ok "已重启"
 }
 
@@ -350,13 +381,51 @@ cmd_health() {
 
 cmd_down() {
   warn "即将停止容器（数据卷保留）"
-  ssh "$SSH_HOST" "cd $REMOTE_DIR && docker compose down"
+  ssh "$SSH_HOST" "$DC down"
   ok "已停止"
+}
+
+# 对比官方 compose 与站点定制版 —— 防止 my-docker 悄悄过期（上游加了服务/参数而这里没有）
+cmd_compose_diff() {
+  step "对比官方与 my-docker 的 compose"
+  ssh "$SSH_HOST" "DIR='$REMOTE_DIR' DC='$DC' bash -s" <<'REMOTE_DIFF'
+set -e
+cd "$DIR"
+
+# 用「渲染后的 config」比对，忽略注释与排版差异，只留语义差异
+OFF="docker compose --project-directory $DIR --env-file $DIR/.env -f $DIR/docker-compose.yml"
+if ! $OFF config > /tmp/_wk_official.yml 2>/dev/null; then
+  echo "  ⚠ 官方 compose 渲染失败（可能上游改了必填变量），跳过结构化比对"
+else
+  $DC config > /tmp/_wk_mydocker.yml 2>/dev/null
+  if diff -q /tmp/_wk_official.yml /tmp/_wk_mydocker.yml >/dev/null; then
+    echo "  ✔ 两份配置语义完全一致（无差异）"
+  else
+    echo "  语义差异（< 官方  > my-docker）："
+    diff -u /tmp/_wk_official.yml /tmp/_wk_mydocker.yml | sed -n '3,200p' | sed 's/^/  /'
+  fi
+fi
+
+echo ""
+echo "--- 两份编排文件的最后一次提交 ---"
+printf '  官方      : '; git log -1 --format='%h %ad %s' --date=short -- docker-compose.yml
+printf '  my-docker : '; git log -1 --format='%h %ad %s' --date=short -- my-docker/docker-compose.yml
+
+off_ts=$(git log -1 --format=%ct -- docker-compose.yml 2>/dev/null || echo 0)
+my_ts=$(git log -1 --format=%ct -- my-docker/docker-compose.yml 2>/dev/null || echo 0)
+echo ""
+if [ "$off_ts" -gt "$my_ts" ]; then
+  echo "  ⚠ 官方 docker-compose.yml 的最近提交比 my-docker 新 ——"
+  echo "    可能有上游变化尚未搬进 my-docker/docker-compose.yml，请逐条核对上面的差异。"
+else
+  echo "  ✔ my-docker 不比官方旧（无未同步的上游变化迹象）"
+fi
+REMOTE_DIFF
 }
 
 cmd_shell() { ssh -t "$SSH_HOST" "cd $REMOTE_DIR 2>/dev/null; exec bash -l"; }
 
-cmd_help() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
+cmd_help() { sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ------------------------------------------------------------------ 入口
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -364,7 +433,8 @@ readonly REPO_ROOT
 
 case "${1:-help}" in
   deploy|update|build|status|restart|health|down|shell) "cmd_$1" "${@:2}" ;;
-  logs)    cmd_logs "${2:-app}" ;;
+  logs)         cmd_logs "${2:-app}" ;;
+  compose-diff) cmd_compose_diff ;;
   help|-h|--help) cmd_help ;;
   *) die "未知命令：$1（用 help 查看用法）" ;;
 esac
