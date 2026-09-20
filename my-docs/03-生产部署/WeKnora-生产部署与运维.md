@@ -260,6 +260,40 @@ ssh nanning-111 "cd /mnt/data/weknora && C=\$(git rev-parse --short=8 HEAD) && \
 # 返回 >=1 且与 HEAD 一致 ⇒ 跑的确实是该提交的源码构建
 ```
 
+方式三（三个镜像各查各的 —— **判据必须适配各工具的实际表示**）
+
+| 镜像 | 该查什么 | 实测（2026-09-21） |
+|---|---|---|
+| `weknora-app`（Go 二进制） | 二进制内注入的 commit（**8 位**） | `grep -ac b1c6638b /app/WeKnora` → **3 次** |
+| `weknora-ui`（前端产物） | **7 位**（`vite.config.ts:19` 有 `.slice(0, 7)`） | `Settings-*.js` 里 `w="b1c6638"` |
+| `weknora-docreader`（Python） | **无 commit 注入** ⇒ 只能比**源文件 sha256** | `utils/ssrf_proxy.py` 等与宿主**逐一一致** |
+
+```bash
+# 前端（注意是 7 位）
+ssh nanning-111 "docker exec WeKnora-frontend sh -c \
+  'grep -ro \"w=\\\"[a-f0-9]\\{7\\}\\\"\" /usr/share/nginx/html/assets/Settings-*.js'"
+
+# docreader（无注入，比文件哈希）
+ssh nanning-111 "cd /mnt/data/weknora && for f in docreader/utils/ssrf_proxy.py \
+  docreader/parser/web_parser.py; do \
+    echo \"\$f 宿主=\$(sha256sum \$f | cut -c1-16)\"; done"
+ssh nanning-111 "docker exec WeKnora-docreader sh -c \
+  'sha256sum /app/docreader/utils/ssrf_proxy.py /app/docreader/parser/web_parser.py'"
+```
+
+> ⚠️ **两个判据陷阱（都实际踩过）**
+> 1. **前端只存 7 位** —— 用 8 位去 grep 会得出「前端没注入」的**错误结论**（实际注入了）。
+> 2. **docreader 没有 commit 注入**（Python 不编译）—— 拿后端那套判据去套会永远查不到，
+>    只能比源文件哈希。
+> ⇒ **"没查到"不等于"没部署"**：查不到时先问「这个载体本来会不会带这个标识」，再换判据。
+
+> **另一个坑：容器绑定的镜像可能 ≠ tag 当前指向的镜像**（containerd 存储 + BuildKit 缓存命中）。
+> 实测：`WeKnora-docreader` 容器的 `.Image` 与 tag 的 `.Id` 不同，且该 ID 已不在
+> `docker image ls` 中（记录被 GC、容器快照仍存活）。原因是 docreader 镜像本次构建
+> **缓存命中未重建**，但 tag 被重新指向了新记录。
+> **判定要点**：这类差异**不代表代码不一致** —— 以「容器内文件哈希 vs 宿主源码」为准。
+> 想彻底归位：`docker compose ... up -d --force-recreate docreader`（会短暂中断解析服务）。
+
 生效链路（改之前只有这一条路能反推，成本很高）：
 `my-docker` 的 build.args → `Dockerfile.app:59-61` builder 阶段的 `ENV`
 → `Makefile:256-259` 从环境变量取 `COMMIT_ID`
