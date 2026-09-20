@@ -28,7 +28,12 @@
 #                             （官方默认空 ⇒ 走 deb.debian.org。注意该参数在
 #                              Dockerfile.docreader 里替换的是**带 scheme 的完整
 #                              URL**，故必须给完整地址，不能只给主机名）
-#   除上述三处，其余内容与官方**逐字一致**。全部可用 .env 覆盖。
+#   [4] app.build.args        + VERSION_ARG / COMMIT_ID_ARG / BUILD_TIME_ARG
+#                             （官方没传 ⇒ 二进制里的 commit 恒为 unknown，
+#                              "111 跑的到底是哪一版"无法查证，只能靠日志行号反推。
+#                              传了之后可经 GET /api/v1/system/info 的 commit_id 直接读。
+#                              值由部署脚本在 111 上按当前 git 状态注入）
+#   除上述四处，其余内容与官方**逐字一致**。全部可用 .env 覆盖。
 #
 #   为什么不用 --build-arg 或 override 文件：`docker compose build` 不支持
 #   --build-arg；而额外 override 文件会引入「需手工同步」的中间产物。
@@ -86,6 +91,17 @@ services:
         #         可用 .env 的 GOPROXY_ARG 覆盖（如需内网私有代理）。
         - GOPROXY_ARG=${GOPROXY_ARG:-https://goproxy.cn,direct}
         - GOSUMDB_ARG=${GOSUMDB_ARG:-off}
+        # [差异 4] 注入构建版本 → 二进制内嵌 commit，可经 GET /api/v1/system/info
+        #         的 commit_id 查证「111 上跑的到底是哪一版」。
+        #         生效链路：这些 ARG 在 builder 阶段设成 ENV（Dockerfile.app:59-61）
+        #         → Makefile:256-259 的 COMMIT_ID=${COMMIT_ID:-unknown} 从环境变量取
+        #         → ldflags -X ...handler.CommitID 写入二进制（Makefile:262）。
+        #         注意 .dockerignore 排除了 .git/，故 VERSION 的 git describe 必然失败、
+        #         只能靠 VERSION_ARG 兜底 —— 所以这里必须传。
+        #         值由部署脚本在 111 上按当前 git 状态注入（见 deploy-wkj-dev.sh）。
+        - VERSION_ARG=${WKJ_BUILD_VERSION:-unknown}
+        - COMMIT_ID_ARG=${WKJ_BUILD_COMMIT:-unknown}
+        - BUILD_TIME_ARG=${WKJ_BUILD_TIME:-unknown}
     container_name: WeKnora-app
     ports:
       - "${APP_PORT:-8080}:8080"

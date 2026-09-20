@@ -261,9 +261,25 @@ for _img in wechatopenai/weknora-app wechatopenai/weknora-ui; do
   fi
 done
 
+# 构建时注入版本信息，使「跑的是哪一版」可查证。
+# 生效链路：compose 的 build.args → Dockerfile.app builder 阶段的 ENV
+#   → Makefile:256-259 从环境变量取 → ldflags -X 写进二进制
+#   → GET /api/v1/system/info 的 commit_id 可直接读。
+# 同时喂给前端的 VITE_FRONTEND_COMMIT（系统信息页会显示）。
+_build_with_version() {
+  WKJ_BUILD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+  WKJ_BUILD_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || true)
+  [ -n "$WKJ_BUILD_VERSION" ] || WKJ_BUILD_VERSION="$BRANCH"
+  WKJ_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  export WKJ_BUILD_COMMIT WKJ_BUILD_VERSION WKJ_BUILD_TIME
+  export VITE_FRONTEND_COMMIT="$WKJ_BUILD_COMMIT"
+  echo "  注入版本信息：version=$WKJ_BUILD_VERSION commit=$WKJ_BUILD_COMMIT"
+  $DC build
+}
+
 if [ "$MODE" = "build" ]; then
   echo "  构建镜像（二开模式，耗时较长，可能 20-40 分钟）..."
-  $DC build
+  _build_with_version
 elif [ "$local_built" = "1" ] && [ "${ALLOW_OVERWRITE:-0}" != "1" ]; then
   echo ""
   echo "  ⚠ 已阻止 pull —— 111 上存在本地构建的二开镜像。"
@@ -271,7 +287,7 @@ elif [ "$local_built" = "1" ] && [ "${ALLOW_OVERWRITE:-0}" != "1" ]; then
   echo "    现自动改用 build 模式。若确实要回到官方镜像，请加："
   echo "        WKJ_ALLOW_PULL_OVERWRITE=1 ./deploy-wkj-dev.sh update"
   echo ""
-  $DC build
+  _build_with_version
 else
   echo "  拉取镜像（--quiet 模式；首次约 5-10 分钟，请耐心等待）..."
   $DC pull --quiet
