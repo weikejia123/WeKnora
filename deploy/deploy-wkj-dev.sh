@@ -18,6 +18,14 @@
 #   ./deploy-wkj-dev.sh shell      登录 111
 #   ./deploy-wkj-dev.sh down       停止容器（保留数据）
 #
+# ★ 关键区分：deploy/update 用的是「官方预构建镜像」，build 才用「你的二开代码」
+#   docker-compose.yml 里每个服务同时写了 image: 与 build:，共用同一个 tag。
+#     · pull  → 拉 registry 官方镜像，覆盖该 tag   ⇒ 源码改动**不生效**
+#     · build → 在 111 上从源码构建，覆盖该 tag   ⇒ 源码改动生效
+#   因此：只改前端/后端源码时，必须用 build；用 update 会把二开镜像换回官方镜像。
+#   脚本已内置保护：检测到本地构建镜像时会**拒绝 pull 并自动改用 build**。
+#   确实要回到官方镜像：WKJ_ALLOW_PULL_OVERWRITE=1 ./deploy-wkj-dev.sh update
+#
 # 设计原则：
 #   - 幂等：任何命令重复执行结果一致，不破坏已有 .env / 数据卷
 #   - 失败即停：set -euo pipefail；任一步失败立刻退出并给出提示
@@ -200,12 +208,38 @@ REMOTE_ENV
 compose_up() {
   local mode="${1:-pull}"
   step "④ 启动容器（模式：$mode）"
-  ssh "$SSH_HOST" "DIR='$REMOTE_DIR' MODE='$mode' bash -s" <<'REMOTE_UP'
+  ssh "$SSH_HOST" "DIR='$REMOTE_DIR' MODE='$mode' ALLOW_OVERWRITE='${WKJ_ALLOW_PULL_OVERWRITE:-0}' bash -s" <<'REMOTE_UP'
 set -e
 cd "$DIR"
 
+TAG=$(grep -m1 '^WEKNORA_VERSION=' .env 2>/dev/null | cut -d= -f2-); TAG=${TAG:-latest}
+
+# ── 二开镜像保护 ──────────────────────────────────────────────────────
+# docker-compose.yml 里每个服务同时写了 image: 和 build:，二者写的是**同一个 tag**：
+#   · docker compose build → 本地构建，覆盖该 tag（二开代码生效）
+#   · docker compose pull  → 拉 registry 官方镜像，同样覆盖该 tag
+# 所以「先 build 二开、后 update(pull)」会把二开镜像**静默替换**回官方镜像，
+# 表现为「代码改了、容器也重建了，但功能一点没变」——极难排查。
+# 判据：registry 拉的镜像带 RepoDigests；本地 docker build 出来的没有（长度 0）。
+local_built=0
+for _img in wechatopenai/weknora-app wechatopenai/weknora-ui; do
+  _n=$(docker image inspect "$_img:$TAG" --format '{{len .RepoDigests}}' 2>/dev/null || echo missing)
+  if [ "$_n" = "0" ]; then
+    local_built=1
+    echo "  · 检测到本地构建镜像：$_img:$TAG（无 registry digest，属二开产物）"
+  fi
+done
+
 if [ "$MODE" = "build" ]; then
   echo "  构建镜像（二开模式，耗时较长，可能 20-40 分钟）..."
+  docker compose build
+elif [ "$local_built" = "1" ] && [ "${ALLOW_OVERWRITE:-0}" != "1" ]; then
+  echo ""
+  echo "  ⚠ 已阻止 pull —— 111 上存在本地构建的二开镜像。"
+  echo "    pull 会把它们静默替换为官方镜像，导致「代码改了但功能没变」。"
+  echo "    现自动改用 build 模式。若确实要回到官方镜像，请加："
+  echo "        WKJ_ALLOW_PULL_OVERWRITE=1 ./deploy-wkj-dev.sh update"
+  echo ""
   docker compose build
 else
   echo "  拉取镜像（--quiet 模式；首次约 5-10 分钟，请耐心等待）..."
