@@ -126,6 +126,36 @@
 
 ### 2.4 二开（改代码）的完整流程
 
+> ### ⚠️ 先读这条：`deploy`/`update` **不会**部署你的代码
+>
+> `docker-compose.yml` 里每个服务**同时**声明了 `image:` 和 `build:`，两者共用同一个 tag：
+>
+> | 命令 | 实际发生 | 源码改动 |
+> |---|---|---|
+> | `docker compose pull`（`deploy` / `update` 走这条） | 拉官方预构建镜像，覆盖 tag | ❌ **不生效** |
+> | `docker compose build`（`build` 子命令走这条） | 在 111 上从源码构建，覆盖同一 tag | ✅ 生效 |
+>
+> **实测（2026-09-20）**：部署完成后，111 上运行的 app 是**官方镜像**：
+>
+> ```
+> wechatopenai/weknora-app:latest
+>   RepoDigests = [wechatopenai/weknora-app@sha256:14953fcb…]   ← 有 registry digest = pull 来的
+>   Created     = 2026-09-03T07:11:01Z                          ← 官方 9 月 3 日构建
+> 容器 WeKnora-app 使用镜像 = 同一 digest
+> ```
+>
+> **判别技法**：`docker build` 出来的镜像**没有** `RepoDigests`；`docker pull` 来的**一定有**。
+> 一条命令即可自查：
+> ```bash
+> ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '{{len .RepoDigests}}'"
+> # 返回 0 = 本地构建（二开代码在跑）    返回 ≥1 = 官方镜像
+> ```
+>
+> **危险点**：`update` 里的 `pull` 会把本地构建的二开镜像**静默替换**回官方镜像 ——
+> 表现为"代码改了、容器也重建了、功能一点没变"，极难排查。
+> **脚本已加保护**：检测到本地构建镜像时会拒绝 pull 并自动改用 `build`。
+> 确实要回到官方镜像：`WKJ_ALLOW_PULL_OVERWRITE=1 ./deploy/deploy-wkj-dev.sh update`
+
 ```bash
 # 1. 本地改代码
 cd /Users/weikejia/CODE/my-agent-group/projects/rag-tools/WeKnora
@@ -137,9 +167,43 @@ git add -A && git commit -m "feat: 我的改动"
 
 # 3. 部署（build 模式会在 111 上构建镜像）
 ./deploy/deploy-wkj-dev.sh build
+
+# 4. 自查：确认跑的确实是本地构建的镜像（应返回 0）
+ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '{{len .RepoDigests}}'"
 ```
 
 > **`build` 模式耗时较长**：Go 编译 + 前端 npm 构建 + docreader 镜像，首次可能 20~40 分钟（111 是 32 核，比本机快）。之后有构建缓存会快很多。
+
+#### 2.4.1 ⚠️ 111 上构建的前置条件（**尚未满足，首次 build 前必须先做**）
+
+111 **无法直连** `registry-1.docker.io` 与 `proxy.golang.org`（实测：只有 `goproxy.cn` 可达 200）。
+而构建期有三处必须联网：
+
+| 步骤 | 依赖 | 当前配置 |
+|---|---|---|
+| 拉基础镜像（`golang:1.26-bookworm`、`node:24-bookworm-slim`、`debian:12.12-slim`） | Docker registry | ✅ 走 `daemon.json` 的 `registry-mirrors`（docker.1ms.run 等），可用 |
+| `apt-get` 装包 | Debian 源 | ✅ `.env` 已设 `APK_MIRROR_ARG=mirrors.tencent.com` |
+| `go install` / `go mod download` | Go module proxy | ❌ **未配置** —— 会回落到 `proxy.golang.org`（不可达） |
+| 前端 `npm install` | npm registry | ❌ **未配置** —— 默认 `registry.npmjs.org`（不可达） |
+
+**根因**：`docker-compose.yml` 的 `app.build.args` 只传了 `APK_MIRROR_ARG` 与 `WITH_ANYDOC`，
+**没有传 `GOPROXY_ARG`**（`Dockerfile.app:23` 声明了该 ARG，但 compose 没 wire）；
+前端服务虽然支持 `NPM_REGISTRY` 参数（`docker-compose.yml:12` 注释里就写了用法），但没人设。
+
+**需要补的两处**（`docker-compose.yml` 是仓库文件，改动要跟着 fork 走）：
+
+```yaml
+# app.build.args 里增加
+- GOPROXY_ARG=${GOPROXY_ARG:-https://goproxy.cn,direct}
+- GOSUMDB_ARG=off
+```
+
+```bash
+# 111 的 .env 里增加（前端构建用）
+NPM_REGISTRY=https://registry.npmmirror.com
+```
+
+> 仓库里**没有 `vendor/` 目录**，所以 `go mod download` 无法离线完成，这个代理参数是硬需求。
 
 ### 2.5 改 `.env` 后的生效方式
 
@@ -297,7 +361,12 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 
 ## 六、待办 / 注意事项
 
+- [ ] **🔴 生产尚未跑你的二开代码**：当前 111 运行的是官方 `2026-09-03` 镜像（`RepoDigests` 非空已证实）。
+      要让 `wkj-dev` 的源码生效，需先补齐 2.4.1 的构建前置条件（`GOPROXY_ARG` + `NPM_REGISTRY`），
+      再执行 `./deploy/deploy-wkj-dev.sh build`（首次约 20~40 分钟）。
 - [ ] **首次部署后建议做的加固**：把 `DISABLE_REGISTRATION` 改为 `true`（注册完管理员账号之后）。
 - [ ] **备份策略**：目前数据只在 111 单机机械盘，`/mnt/data` 无备份。数据库（`weknora_postgres-data` 卷）应纳入备份。
 - [ ] **`ops/hosts/nanning-111/services.md` 待登记**本服务（端口 41200/41201）。
 - [ ] 110 的 Ollama 是单并发槽，若用其做 embedding，需留意与其它调用方的排队冲突。
+- [ ] 111 上的代码克隆会落后于本机（`sync_code` 只在执行脚本时才对齐）——想知道线上是哪一版，直接
+      `ssh nanning-111 "cd /mnt/data/weknora && git log --oneline -1"`。
