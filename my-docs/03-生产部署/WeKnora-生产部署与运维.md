@@ -157,26 +157,40 @@
 > | `docker compose pull`（`deploy` / `update` 走这条） | 拉官方预构建镜像，覆盖 tag | ❌ **不生效** |
 > | `docker compose build`（`build` 子命令走这条） | 在 111 上从源码构建，覆盖同一 tag | ✅ 生效 |
 >
-> **实测（2026-09-20）**：部署完成后，111 上运行的 app 是**官方镜像**：
+> **实测（2026-09-20，构建前）**：当时 111 上运行的 app 是**官方镜像**：
 >
 > ```
 > wechatopenai/weknora-app:latest
->   RepoDigests = [wechatopenai/weknora-app@sha256:14953fcb…]   ← 有 registry digest = pull 来的
->   Created     = 2026-09-03T07:11:01Z                          ← 官方 9 月 3 日构建
-> 容器 WeKnora-app 使用镜像 = 同一 digest
+>   Created     = 2026-09-03T07:11:01Z    ← 官方 9 月 3 日构建（判据看这个）
+>   RepoDigests = [wechatopenai/weknora-app@sha256:14953fcb…]
+> 容器 WeKnora-app 使用镜像 = 同一 ID
 > ```
 >
-> **判别技法**：`docker build` 出来的镜像**没有** `RepoDigests`；`docker pull` 来的**一定有**。
-> 一条命令即可自查：
+> ### ⚠️ 判别技法（**2026-09-20 修正，别再用 RepoDigests**）
+>
+> 早先我写的判据说"本地构建的镜像 `RepoDigests` 为空"—— **这是错的**。
+> 本机 Docker 使用 **containerd 镜像存储**，本地构建的单架构镜像其 `RepoDigests`
+> **就等于自己的镜像 ID**（实测 tag 指向 `sha256:f66721c1…`，`RepoDigests` 也是
+> `…@sha256:f66721c1…`）⇒ 拿它判"是否本地构建"**恒为假，保护会失效**。
+>
+> 正确的两条判据：
+>
 > ```bash
-> ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '{{len .RepoDigests}}'"
-> # 返回 0 = 本地构建（二开代码在跑）    返回 ≥1 = 官方镜像
+> # 判据 A：镜像构建时间（最直观）
+> ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '{{.Created}}'"
+> #   2026-09-03 = 官方预构建镜像；今天的时间 = 本地源码构建
+>
+> # 判据 B（最强，见 2.4.1）：二进制里注入的 commit
+> ssh nanning-111 "docker exec WeKnora-app grep -ac 87bf42e4 /app/WeKnora"
+> #   与 111 上 git rev-parse --short=8 HEAD 比对，一致即证明跑的是该提交
 > ```
 >
 > **危险点**：`update` 里的 `pull` 会把本地构建的二开镜像**静默替换**回官方镜像 ——
 > 表现为"代码改了、容器也重建了、功能一点没变"，极难排查。
-> **脚本已加保护**：检测到本地构建镜像时会拒绝 pull 并自动改用 `build`。
-> 确实要回到官方镜像：`WKJ_ALLOW_PULL_OVERWRITE=1 ./deploy/deploy-wkj-dev.sh update`
+> **脚本的保护机制**：`build` 成功后把各镜像 ID 登记到 `.git/wkj-last-build`
+> （放在 `.git` 内 ⇒ 不污染工作区）；后续若 tag 仍指向登记过的 ID，就判定为二开产物，
+> **拒绝 pull 并自动改用 `build`**。确实要回到官方镜像：
+> `WKJ_ALLOW_PULL_OVERWRITE=1 ./deploy/deploy-wkj-dev.sh update`
 
 > ### ⚠️ 先看清楚：`build` 到底会升什么版本
 >
@@ -217,8 +231,9 @@ git add -A && git commit -m "feat: 我的改动"
 # 3. 部署（build 模式会在 111 上构建镜像）
 ./deploy/deploy-wkj-dev.sh build
 
-# 4. 自查：确认跑的确实是本地构建的镜像（应返回 0）
-ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '{{len .RepoDigests}}'"
+# 4. 自查：确认跑的确实是本地构建（看构建时间；并核二进制里的 commit）
+ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '{{.Created}}'"
+ssh nanning-111 "docker exec WeKnora-app grep -ac $(git rev-parse --short=8 HEAD) /app/WeKnora"
 ```
 
 > **`build` 模式耗时较长**：Go 编译 + 前端 npm 构建 + docreader 镜像，首次可能 20~40 分钟（111 是 32 核，比本机快）。之后有构建缓存会快很多。
@@ -233,12 +248,16 @@ ssh nanning-111 "curl -s -H 'Authorization: Bearer <token>' \
   http://localhost:41201/api/v1/system/info" | grep -o '"commit_id":"[^"]*"'
 ```
 
-方式二（不用登录）：看镜像是否本地构建 + 构建时间
+方式二（不用登录）：看构建时间 + 直接核二进制里的 commit
 
 ```bash
-ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest \
-  --format 'digest数={{len .RepoDigests}} 构建于={{.Created}}'"
-# digest数=0 表示本地构建（二开代码在跑）；非 0 表示官方镜像
+# 构建时间：2026-09-03 = 官方预构建；今天的时间 = 本地源码构建
+ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '{{.Created}}'"
+
+# ★ 最强判据：二进制里注入的 commit 应与 111 上的 HEAD 一致
+ssh nanning-111 "cd /mnt/data/weknora && C=\$(git rev-parse --short=8 HEAD) && \
+  docker exec WeKnora-app grep -ac \$C /app/WeKnora && echo \"期望提交 \$C\""
+# 返回 >=1 且与 HEAD 一致 ⇒ 跑的确实是该提交的源码构建
 ```
 
 生效链路（改之前只有这一条路能反推，成本很高）：
@@ -484,11 +503,57 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 
 ---
 
+### 5.5 首次源码构建（2026-09-20 23:57，第 5 次尝试成功）
+
+前 4 次失败全部出在**构建期国际网络依赖**上，逐项定位并解决后第 5 次成功。
+
+**结果核对（全部实测）**
+
+| 项 | 结果 |
+|---|---|
+| 耗时 | **15m57s**（app / frontend / docreader 三个镜像） |
+| 镜像构建时间 | `2026-09-20T23:57` ⇒ 本地源码构建（非官方 `2026-09-03`） |
+| **二进制内的 commit** | `grep -ac 87bf42e4 /app/WeKnora` **命中**，与 111 上 `git rev-parse --short=8 HEAD` **一致** |
+| 数据库迁移 | `90 → 106`，`dirty=false`；表数 `70 → 78` |
+| **数据完整性** | `knowledges=2 chunks=81 wiki_pages=33 tenants=1 kbs=1` ⇒ **与构建前基线逐项一致** |
+| 服务 | 前端 HTTP 200 / 后端 HTTP 200；app、docreader `healthy` |
+
+**构建期联网依赖与国内源矩阵**（这是能构建成功的关键）
+
+| # | 依赖 | 官方默认源 | 本网络实测 | 采用的替代 |
+|---|---|---|---|---|
+| 1 | apt（docreader 两阶段 / app builder+final） | deb.debian.org | 4.6~9MB/s（但构建内会抖动到很慢） | `https://mirrors.tencent.com`（差异[3]） |
+| 2 | apt（app **browserskill** 阶段） | deb.debian.org | 慢（上游未换源，**疏漏**） | 暂未处理，能过 |
+| 3 | Go modules | proxy.golang.org | 不可达 | `goproxy.cn`（差异[1]） |
+| 4 | npm（frontend / browserskill pnpm） | registry.npmjs.org | 不可达 | `registry.npmmirror.com`（差异[2][7]） |
+| 5 | pip（uv 安装器 + 依赖） | pypi | 1.4MB/s ✅ | 无需处理 |
+| 6 | protoc | GitHub Releases | 0~40KB/s 且中断 | **预置到 `packages/`** 走 Dockerfile 离线分支 |
+| 7 | grpc_health_probe | GitHub Releases | 同上 | `GH_PROXY`（差异[6]） |
+| 8 | Rust 工具链 | static.rust-lang.org | **36KB/s ⇒ 约 2 小时** | `rsproxy.cn`（差异[5]） |
+| 9 | `git clone BrowserSkill` | github.com | **HTTP2 framing 报错** | `GH_PROXY` + `git insteadOf`（差异[6]） |
+| 10 | cargo crates（anydoc / bsk） | crates.io | 慢 | `sparse+https://rsproxy.cn/index/`（差异[8]） |
+| 11 | uv 二进体 | releases.astral.sh | 1.4MB/s ✅ | 无需处理 |
+
+**GitHub 反代实测**（判据 = 内容 sha256 与官方三方交叉验证值一致，非状态码）
+
+| 反代 | 下载 1699853B 耗时 | 速度 | git 协议 | 判定 |
+|---|---|---|---|---|
+| **`https://gh-proxy.com/`** | 6s | ≈283KB/s | ✅ 同一 HEAD | **采用** |
+| `https://ghfast.top/` | 9s | ≈189KB/s | ✅ 同一 HEAD | 备选 |
+| `https://ghproxy.net/` | 55s | ≈31KB/s | — | 偏慢 |
+| `ghproxy.cn` / `ghproxy.link` / `gh.con.sh` | 只返回短响应体 | — | — | ✗ |
+| 直连 github.com | 失败 | 0 | ✗ | ✗ |
+
+**排查方法论（踩过两次同类错）**：判"通道能不能用"必须**两条判据同时成立** ——
+① 下载**完整**（`curl` 返回码 0 / 字节数等于已知值 / 能解压）；② **哈希**等于可信基准。
+只看状态码会把错误页判成"可用"；只看哈希但下载被超时截断，会把可用通道判成"不可用"。
+且**测速必须串行** —— 并行请求会触发反代限流，返回短响应体 + 200，得出错误结论。
+
 ## 六、待办 / 注意事项
 
-- [ ] **🔴 生产尚未跑你的二开代码**：当前 111 运行的是官方 `2026-09-03` 镜像（`RepoDigests` 非空已证实）。
-      构建前置条件已就绪（见 2.4.2，已由 `my-docker/` 解决），**下一步只需拍板执行**：
-      `./deploy/deploy-wkj-dev.sh build`（首次约 20~40 分钟；失败会停在 `up -d` 之前，不影响在跑的容器）。
+- [x] **✅ 生产已在跑二开代码（2026-09-20 23:57 完成）**：`./deploy/deploy-wkj-dev.sh build` 成功，
+      耗时 15m57s。二进制内注入的 commit = `87bf42e4` = 111 上 `wkj-dev` 的 HEAD；
+      迁移 `90 → 106`（`dirty=false`）；数据与基线逐项一致。详见 §5.5。
 - [ ] **首次部署后建议做的加固**：把 `DISABLE_REGISTRATION` 改为 `true`（注册完管理员账号之后）。
 - [ ] **备份策略**：目前数据只在 111 单机机械盘，`/mnt/data` 无备份。数据库（`weknora_postgres-data` 卷）应纳入备份。
 - [ ] **`ops/hosts/nanning-111/services.md` 待登记**本服务（端口 41200/41201）。
