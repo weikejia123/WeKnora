@@ -251,13 +251,22 @@ TAG=$(grep -m1 '^WEKNORA_VERSION=' .env 2>/dev/null | cut -d= -f2-); TAG=${TAG:-
 #   · docker compose pull  → 拉 registry 官方镜像，同样覆盖该 tag
 # 所以「先 build 二开、后 update(pull)」会把二开镜像**静默替换**回官方镜像，
 # 表现为「代码改了、容器也重建了，但功能一点没变」——极难排查。
-# 判据：registry 拉的镜像带 RepoDigests；本地 docker build 出来的没有（长度 0）。
+# 判据（2026-09-20 修正）：**不能用 RepoDigests 是否为空**。
+#   本机 Docker 用 containerd 镜像存储：本地构建的单架构镜像，其 RepoDigests
+#   就等于自己的镜像 ID（实测 tag 指向 sha256:f66721c1… 而 RepoDigests 也是
+#   wechatopenai/weknora-app@sha256:f66721c1…）⇒ 用 RepoDigests 判"是否本地构建"
+#   **恒为 false，保护会失效**。
+# 改用「构建时登记的镜像 ID」做判据：`$DC build` 成功后把各镜像 ID 写入
+#   .git/wkj-last-build（放在 .git 内 ⇒ 不污染工作区）。之后若 tag 仍指向
+#   登记过的 ID，说明它还是我们构建的产物 → 拒绝 pull。
 local_built=0
+_marker="$DIR/.git/wkj-last-build"
 for _img in wechatopenai/weknora-app wechatopenai/weknora-ui; do
-  _n=$(docker image inspect "$_img:$TAG" --format '{{len .RepoDigests}}' 2>/dev/null || echo missing)
-  if [ "$_n" = "0" ]; then
+  _cur=$(docker image inspect "$_img:$TAG" --format '{{.Id}}' 2>/dev/null || echo missing)
+  _rec=$(awk -v k="$_img:$TAG" '$1==k {print $2; exit}' "$_marker" 2>/dev/null || true)
+  if [ -n "$_rec" ] && [ "$_cur" = "$_rec" ]; then
     local_built=1
-    echo "  · 检测到本地构建镜像：$_img:$TAG（无 registry digest，属二开产物）"
+    echo "  · 检测到本地构建镜像：$_img:$TAG（ID 与构建登记一致，属二开产物）"
   fi
 done
 
@@ -371,6 +380,15 @@ _build_with_version() {
   _preflight_build_sources
   _ensure_build_artifacts
   $DC build
+  # 登记本次构建的镜像 ID，供后续「二开镜像保护」判断 tag 是否已被 pull 覆盖
+  # （放在 .git 内 ⇒ 不污染工作区；判据修正原因见 compose_up 里的说明）
+  _marker="$DIR/.git/wkj-last-build"
+  : > "$_marker"
+  for _img in wechatopenai/weknora-app wechatopenai/weknora-ui wechatopenai/weknora-docreader; do
+    _id=$(docker image inspect "$_img:$TAG" --format '{{.Id}}' 2>/dev/null || true)
+    [ -n "$_id" ] && printf '%s:%s %s\n' "$_img" "$TAG" "$_id" >> "$_marker"
+  done
+  echo "  已登记本次构建的镜像 ID（.git/wkj-last-build）"
 }
 
 if [ "$MODE" = "build" ]; then
