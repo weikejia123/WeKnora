@@ -25,9 +25,12 @@
 #   [2] frontend.build.args   NPM_REGISTRY 默认值改为 npmmirror
 #                             （官方默认空 ⇒ 走 registry.npmjs.org，国内不可达）
 #   [3] docreader.build.args  APT_MIRROR 默认值改为腾讯 debian 源
-#                             （官方默认空 ⇒ 走 deb.debian.org。注意该参数在
-#                              Dockerfile.docreader 里替换的是**带 scheme 的完整
-#                              URL**，故必须给完整地址，不能只给主机名）
+#                             （官方默认空 ⇒ 走 deb.debian.org。★ 该参数在
+#                              Dockerfile.docreader 里替换的是**带 scheme 的 base、
+#                              不含路径**，而 debian.sources 本身已带 /debian 与
+#                              /debian-security —— 只能给 `https://mirrors.tencent.com`，
+#                              给成 `.../debian` 会拼成 /debian/debian 导致 apt 404
+#                              构建失败（exit 100，已踩过））
 #   [4] app.build.args        + VERSION_ARG / COMMIT_ID_ARG / BUILD_TIME_ARG
 #                             （官方没传 ⇒ 二进制里的 commit 恒为 unknown，
 #                              "111 跑的到底是哪一版"无法查证，只能靠日志行号反推。
@@ -463,9 +466,14 @@ services:
       context: .
       dockerfile: docker/Dockerfile.docreader
       args:
-        # [差异 3] 官方默认空 ⇒ deb.debian.org。注意 Dockerfile.docreader 的 sed 替换的
-        #         是「带 scheme 的完整 URL」，故此处必须给完整地址，只给主机名会拼坏。
-        - APT_MIRROR=${APT_MIRROR:-https://mirrors.tencent.com/debian}
+        # [差异 3] 官方默认空 ⇒ http://deb.debian.org。
+        #         ★ 取值语义（踩过一次）：Dockerfile.docreader 的 sed 替换的是
+        #           **带 scheme 的 base，不含路径**，而 debian.sources 里本身已带
+        #           `/debian` 与 `/debian-security`。所以只能给
+        #           `https://mirrors.tencent.com`；若写成
+        #           `https://mirrors.tencent.com/debian` 会拼成
+        #           `.../debian/debian` → apt 404 → 构建失败（exit 100）。
+        - APT_MIRROR=${APT_MIRROR:-https://mirrors.tencent.com}
     container_name: WeKnora-docreader
     # docreader gRPC ships without auth/TLS and is only consumed by the app
     # container over the WeKnora-network (DOCREADER_ADDR defaults to

@@ -261,6 +261,53 @@ for _img in wechatopenai/weknora-app wechatopenai/weknora-ui; do
   fi
 done
 
+# ── 构建源自检：把「源配置错误」挡在 40 分钟构建之前 ──────────────────────
+# 为什么必须有：实测踩过，且都是**构建末期**才暴露，白等 30+ 分钟：
+#   ① APT_MIRROR 写成带 /debian 的完整路径，与 debian.sources 里已有的
+#      /debian 拼成 /debian/debian → apt 404 → exit 100（本次实际踩到）
+#   ② apt 的 404/证书类失败有**假成功**陷阱：`apt-get update -qq` 在索引
+#      全被忽略时仍返回 0，install 才失败 —— 所以只看 update 的退出码会误判。
+#   ③ 判断「https 源能不能用」必须以**实际使用该源的基镜像**为准：
+#      docreader 两个阶段都是 python:3.10.18-bookworm（非 slim，自带 CA），
+#      https 可用；而裸 debian:12.12-slim 无 CA，https 必失败。
+#      ★ 用错基镜像做探测会得出相反结论（本次先误判为"必须用 http"）。
+_check_url_ok() {
+  local url="$1" name="$2" hdr code loc
+  hdr=$(curl -s -D - -o /dev/null --max-time 8 "$url" 2>/dev/null || true)
+  code=$(printf '%s' "$hdr" | head -1 | awk '{print $2}')
+  loc=$(printf '%s' "$hdr" | awk 'tolower($1)=="location:"{print $2}' | head -1 | tr -d '\r')
+  if [ "$code" = "200" ]; then
+    echo "    ✔ $name 可用（200 且不跳转）"
+    return 0
+  fi
+  echo "    ✘ $name 不可用：HTTP ${code:-无响应}  $url"
+  [ -n "$loc" ] && echo "       跳转到 $loc —— 需确认实际使用该源的基镜像是否自带 CA 证书"
+  return 1
+}
+
+_preflight_build_sources() {
+  local apt goproxy npm rc=0
+  apt=$($DC config 2>/dev/null | awk '/^ *APT_MIRROR:/{print $2; exit}')
+  goproxy=$($DC config 2>/dev/null | awk '/^ *GOPROXY_ARG:/{print $2; exit}')
+  npm=$($DC config 2>/dev/null | awk '/^ *NPM_REGISTRY:/{print $2; exit}')
+
+  echo "  构建源自检（秒级；避免源配置问题拖到构建 30 分钟后才暴露）..."
+  if [ -z "$apt" ]; then
+    echo "    · APT_MIRROR 未设置 → 走官方源 deb.debian.org（官方测试过的路径，较慢但可靠）"
+  else
+    _check_url_ok "$apt/debian/dists/bookworm/Release" "APT_MIRROR" || rc=1
+  fi
+  [ -n "$goproxy" ] && { _check_url_ok "${goproxy%%,*}" "GOPROXY" || rc=1; }
+  [ -n "$npm" ]     && { _check_url_ok "$npm" "NPM_REGISTRY" || rc=1; }
+
+  if [ "$rc" != "0" ]; then
+    echo ""
+    echo "    ✘ 构建源自检未通过，已中止（避免白等 30+ 分钟）。"
+    echo "      覆盖方式：编辑 $DIR/.env 里的 APT_MIRROR / GOPROXY_ARG / NPM_REGISTRY 后重试。"
+    exit 1
+  fi
+}
+
 # 构建时注入版本信息，使「跑的是哪一版」可查证。
 # 生效链路：compose 的 build.args → Dockerfile.app builder 阶段的 ENV
 #   → Makefile:256-259 从环境变量取 → ldflags -X 写进二进制
@@ -274,6 +321,7 @@ _build_with_version() {
   export WKJ_BUILD_COMMIT WKJ_BUILD_VERSION WKJ_BUILD_TIME
   export VITE_FRONTEND_COMMIT="$WKJ_BUILD_COMMIT"
   echo "  注入版本信息：version=$WKJ_BUILD_VERSION commit=$WKJ_BUILD_COMMIT"
+  _preflight_build_sources
   $DC build
 }
 
