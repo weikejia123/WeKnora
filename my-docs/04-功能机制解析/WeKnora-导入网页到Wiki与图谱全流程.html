@@ -253,10 +253,35 @@
   </div>
 
   <div class="note alert">
-    <b>但有一个诚实的提醒：</b>上面验证的是"实体名"来自原文。而页面的<b>描述性文字</b>（如"是财政部发布的部门规章，规范基本建设项目的财务管理和会计核算"）
-    是 LLM 写的——这部分<b>可能包含模型自身的先验知识</b>。那篇原文只有 2423 字符，不可能包含这句对《基本建设财务规则》的概括。所以：
-    <br>· <span class="yes">实体/概念的识别</span>= 来自原文，可追溯；
-    <br>· <span style="color:#b45309;font-weight:700">描述性扩写</span>= 可能有模型知识成分，<b>需要人工复核才能当依据用</b>。
+    <b>⚠️ 实测边界（这条最重要，建议你重点看）：</b>
+    <br><br>
+    上面验证的是"实体名"来自原文。但<b>页面的正文内容</b>是 LLM 写的，而原文往往<b>只提供了那个名字</b>。
+    我按内容长度把你这 15 个页面排了一遍，规律非常清楚：
+    <br><br>
+    <table style="margin:8px 0">
+      <tr><th style="width:330px">页面</th><th style="width:90px">字符数</th><th>判断</th></tr>
+      <tr><td><code>concept/结转结余资金管理</code></td><td>2719</td><td><span class="yes">✓ 厚</span> —— 本文主题，原文就在讲它</td></tr>
+      <tr><td><code>entity/财政部关于…的通知</code></td><td>2277</td><td><span class="yes">✓ 厚</span> —— 文档自身</td></tr>
+      <tr><td><code>entity/国务院办公厅…若干意见</code></td><td>209</td><td><span style="color:#b45309;font-weight:700">⚠ 薄</span> —— 原文只提及名字</td></tr>
+      <tr><td><code>entity/基本建设财务规则</code></td><td>188</td><td><span style="color:#b45309;font-weight:700">⚠ 薄</span> —— 原文只提及名字</td></tr>
+      <tr><td><code>entity/中华人民共和国预算法</code></td><td><b>65</b></td><td><span class="no">✕ 空壳</span> —— 原文只给了书名</td></tr>
+    </table>
+
+    <b>《中华人民共和国预算法》那页的全文只有这一句：</b>
+    <div class="evi" style="margin:8px 0;border-color:#fecaca;background:#fff">
+      「中华人民共和国预算法是规范国家预算编制、审批、执行、调整、决算和监督的法律，是财政管理的基本法律依据。」
+    </div>
+    而原文里关于《预算法》，<b>只有书名号里的那个名字</b>，一个字的解释都没有。所以这句概括
+    <b>100% 来自模型的先验知识</b>，不是从原文提取的。
+    <br><br>
+    <b>结论：</b>"实体被识别出来" ≠ "该实体有内容支撑"。原文只是<b>提及</b>的政策法规，其 Wiki 页是<b>空壳</b>，
+    里面填的是模型已知的常识性描述。
+    <br><br>
+    <b>使用建议：</b>若这些 Wiki 要作为正式材料的依据——
+    <br>· <b>可放心引用</b>：内容与原文重合的部分（本文主题相关页面）
+    <br>· <b>必须人工核实</b>：短页面（&lt;300 字符）里对政策法规的概括性描述
+    <br>· <b>最好的办法</b>：把提到的政策<b>原文也导入同一知识库</b>——同名页会被复用并合并依据，
+    空壳页立即变成有原文支撑的实体页（机制见第 5 节）
   </div>
 </section>
 
@@ -354,9 +379,12 @@
     <tr><td>知识导入/Wiki/图谱全程无联网搜索</td><td>对上述全部文件 grep <code>web_search</code>/<code>http.</code>/<code>Fetch</code> 均 0 命中；<code>web_search</code> 工具仅注册给对话 Agent（<code>agent_service.go:1101</code>）</td></tr>
   </table>
 
-  <div class="note ok">
-    <b>唯一需要留意的边界：</b>Wiki 页面的"描述性文字"由 LLM 扩写，可能混入模型先验知识（见第 3 节末尾提醒）。
-    如果这些 Wiki 要作为正式材料的依据，建议对描述性句子做人工抽检。
+  <div class="note alert">
+    <b>唯一但重要的边界（已实测量化）：</b>原文只是<b>提及</b>（给出名字）的政策法规，其 Wiki 页是<b>空壳</b>——
+    页内描述由 LLM 凭先验知识填写，<b>不受原文约束</b>。
+    <br>本次实测：本文主题页 2719 字符（有原文支撑），而被提及的《预算法》页只有 <b>65 字符</b>（纯模型知识）。
+    <br><b>判断口径：页面内容 ≫ 原文中关于它的信息 ⇒ 属于模型扩写，需人工核实。</b>
+    <br>解法见第 5 节：把提到的政策原文导入同一知识库，空壳页会被自动复用并补实。
   </div>
 </section>
 
