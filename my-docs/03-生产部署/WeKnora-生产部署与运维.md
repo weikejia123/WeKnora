@@ -196,9 +196,37 @@ ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '
 
 > **`build` 模式耗时较长**：Go 编译 + 前端 npm 构建 + docreader 镜像，首次可能 20~40 分钟（111 是 32 核，比本机快）。之后有构建缓存会快很多。
 
+#### 2.4.0 怎么确认线上跑的是哪一版（已支持直接查）
+
+`build` 时会自动注入版本信息，所以**不需要**再去猜。查证方式：
+
+```bash
+# 方式一：后端接口（返回 version / commit_id / build_time / go_version）
+ssh nanning-111 "curl -s -H 'Authorization: Bearer <token>' \
+  http://localhost:41201/api/v1/system/info" | grep -o '"commit_id":"[^"]*"'
+```
+
+方式二（不用登录）：看镜像是否本地构建 + 构建时间
+
+```bash
+ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest \
+  --format 'digest数={{len .RepoDigests}} 构建于={{.Created}}'"
+# digest数=0 表示本地构建（二开代码在跑）；非 0 表示官方镜像
+```
+
+生效链路（改之前只有这一条路能反推，成本很高）：
+`my-docker` 的 build.args → `Dockerfile.app:59-61` builder 阶段的 `ENV`
+→ `Makefile:256-259` 从环境变量取 `COMMIT_ID`
+→ `Makefile:262` 用 `ldflags -X ...handler.CommitID` 写进二进制
+→ `GET /api/v1/system/info` 的 `commit_id`。
+
+> 官方 compose 不传这几个参数 ⇒ 二进制里恒为 `unknown`，只能靠**日志行号**反推
+> （如官方镜像报 `knowledge_process.go:3414`、wkj-dev 报 `3601`）。这正是我们加 `[差异 4]` 的原因。
+> 另外 `.dockerignore` 排除了 `.git/`，`VERSION` 的 `git describe` 必然失败，只能靠 `VERSION_ARG` 兜底。
+
 #### 2.4.1 111 上构建的前置条件（✅ 已由 `my-docker/` 解决）
 
-111 **无法直连** `registry-1.docker.io` 与 `proxy.golang.org`。构建期必须联网的四处：
+111 **无法直连** `registry-1.docker.io` 与 `proxy.golang.org`。构建期必须联网的几处：
 
 | 步骤 | 依赖 | 现状 |
 |---|---|---|
@@ -206,6 +234,10 @@ ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '
 | `apt-get` 装包 | Debian 源 | ✅ `APK_MIRROR_ARG` / `APT_MIRROR` 已配腾讯源 |
 | `go install` / `go mod download` | Go module proxy | ✅ 已由 `my-docker/` 传 `GOPROXY_ARG` |
 | 前端 `npm install` | npm registry | ✅ 已由 `my-docker/` 传 `NPM_REGISTRY` |
+| **anydoc（Rust）工具链**：`curl https://sh.rustup.rs \| sh` + 取 anydoc crate | `sh.rustup.rs`、`rsproxy.cn` | ✅ 实测均可达 200（脚本优先用国内镜像 `rsproxy.cn`） |
+
+> `WITH_ANYDOC=1`（默认）= 在 Go 进程内解析 office 文档，构建时需装 Rust 工具链。
+> 想跳过可设 `WITH_ANYDOC=0`（省几分钟和约 1GB 层），但会失去进程内解析能力。
 
 **根因**：官方 `docker-compose.yml` 的 `app.build.args` 只传了 `APK_MIRROR_ARG` 与 `WITH_ANYDOC`，
 **没有 wire `GOPROXY_ARG`**（`Dockerfile.app:23` 声明了该 ARG 却没传）；`NPM_REGISTRY` 与 `APT_MIRROR` 同理
