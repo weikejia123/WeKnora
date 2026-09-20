@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WeKnora 架构与部署可视化</title>
+<style>
+  :root{
+    --ink:#0f172a; --ink2:#334155; --ink3:#64748b;
+    --line:#e2e8f0; --paper:#ffffff; --bg:#f1f5f9;
+    --blue:#2563eb; --purple:#7c3aed; --orange:#ea580c;
+    --green:#059669; --red:#dc2626; --amber:#b45309;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:32px 20px 64px;
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px; line-height:1.7;
+  }
+  .wrap{max-width:1060px;margin:0 auto}
+  header{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:22px 26px;margin-bottom:26px}
+  h1{margin:0 0 6px;font-size:21px;letter-spacing:.2px}
+  .meta{color:var(--ink3);font-size:13px}
+  .badge{display:inline-block;background:#eff6ff;color:var(--blue);border:1px solid #bfdbfe;
+    border-radius:5px;padding:1px 7px;font-size:12px;font-weight:600;margin-right:6px}
+  section{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:22px 26px;margin-bottom:26px}
+  h2{margin:0 0 4px;font-size:17px}
+  h2 .num{display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;
+    background:var(--ink);color:#fff;border-radius:6px;font-size:13px;margin-right:9px;vertical-align:2px}
+  .sub{color:var(--ink3);font-size:13px;margin:0 0 18px 33px}
+  .svgbox{width:100%;overflow-x:auto}
+  svg{display:block;width:100%;height:auto;min-width:660px}
+  .note{background:#fffbeb;border:1px solid #fde68a;border-left:4px solid var(--amber);
+    border-radius:8px;padding:12px 16px;margin-top:18px;font-size:13px;color:#78350f}
+  .note.alert{background:#fef2f2;border-color:#fecaca;border-left-color:var(--red);color:#7f1d1d}
+  .note b{color:inherit}
+  .grid{display:grid;gap:14px}
+  .g4{grid-template-columns:repeat(auto-fit,minmax(224px,1fr))}
+  .card{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:#fcfdff}
+  .card .t{font-weight:700;font-size:14px;margin-bottom:3px;display:flex;align-items:center;gap:7px}
+  .card .d{font-size:12.5px;color:var(--ink2);line-height:1.65}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .req{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:700;margin-left:auto}
+  .r-must{background:#fef2f2;color:var(--red);border:1px solid #fecaca}
+  .r-opt{background:#f1f5f9;color:var(--ink3);border:1px solid var(--line)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f8fafc;font-weight:700;font-size:12.5px;color:var(--ink2)}
+  td code,code{background:#f1f5f9;border:1px solid var(--line);border-radius:4px;
+    padding:0 4px;font-size:12px;font-family:ui-monospace,Menlo,monospace;color:#0f172a}
+  .yes{color:var(--green);font-weight:700}
+  .no{color:var(--red);font-weight:700}
+  footer{text-align:center;color:var(--ink3);font-size:12.5px;padding-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>WeKnora 架构与部署可视化</h1>
+  <div class="meta">
+    <span class="badge">v0.8.0</span><span class="badge">MIT</span><span class="badge">Go 1.26</span>
+    腾讯开源 · 企业级知识管理框架 · RAG + ReAct Agent + 自动 Wiki
+  </div>
+</header>
+
+<!-- ============ 1. 架构分层 ============ -->
+<section>
+  <h2><span class="num">1</span>系统分层：三个子系统</h2>
+  <p class="sub">核心只需 4 个常驻容器；其余组件全部是 opt-in profile。</p>
+  <div class="svgbox">
+  <svg viewBox="0 0 1000 480" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,PingFang SC,sans-serif">
+    <defs>
+      <marker id="ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#94a3b8"/>
+      </marker>
+    </defs>
+
+    <!-- L1 客户端 -->
+    <rect x="30" y="16" width="940" height="82" rx="10" fill="#f8fbff" stroke="#2563eb" stroke-width="2"/>
+    <text x="52" y="42" font-size="15" font-weight="700" fill="#1e40af">客户端层</text>
+    <text x="148" y="42" font-size="12.5" fill="#64748b">Vue 3 + Nginx :80 · 无状态</text>
+    <g font-size="11.5" fill="#334155">
+      <rect x="52" y="54" width="150" height="26" rx="6" fill="#fff" stroke="#bfdbfe"/>
+      <text x="127" y="71" text-anchor="middle">Web UI</text>
+      <rect x="214" y="54" width="150" height="26" rx="6" fill="#fff" stroke="#bfdbfe"/>
+      <text x="289" y="71" text-anchor="middle">Chrome 插件 / 小程序</text>
+      <rect x="376" y="54" width="160" height="26" rx="6" fill="#fff" stroke="#bfdbfe"/>
+      <text x="456" y="71" text-anchor="middle">网站嵌入 Widget</text>
+      <rect x="548" y="54" width="400" height="26" rx="6" fill="#fff" stroke="#bfdbfe"/>
+      <text x="748" y="71" text-anchor="middle">REST API · CLI · MCP Server · IM 渠道</text>
+    </g>
+
+    <line x1="500" y1="98" x2="500" y2="122" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar)"/>
+    <text x="514" y="115" font-size="11" fill="#64748b">/api/ 反代</text>
+
+    <!-- L2 后端 -->
+    <rect x="30" y="124" width="940" height="146" rx="10" fill="#faf8ff" stroke="#7c3aed" stroke-width="2"/>
+    <text x="52" y="150" font-size="15" font-weight="700" fill="#5b21b6">app（后端主体）</text>
+    <text x="210" y="150" font-size="12.5" fill="#64748b">Go 1.26 · 单二进制 · internal/ 约 2000 个 Go 文件</text>
+    <g font-size="11.5" fill="#334155">
+      <rect x="52" y="162" width="212" height="26" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="158" y="179" text-anchor="middle">REST / 路由 / 中间件</text>
+      <rect x="276" y="162" width="212" height="26" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="382" y="179" text-anchor="middle">分块 chunker（5 种策略）</text>
+      <rect x="500" y="162" width="212" height="26" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="606" y="179" text-anchor="middle">向量化 + 检索编排</text>
+      <rect x="724" y="162" width="224" height="26" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="836" y="179" text-anchor="middle">ReAct Agent + 工具 / 沙箱</text>
+
+      <rect x="52" y="196" width="212" height="26" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="158" y="213" text-anchor="middle">空间 RBAC + 审计日志</text>
+      <rect x="276" y="196" width="212" height="26" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="382" y="213" text-anchor="middle">作用域 API Key</text>
+      <rect x="500" y="196" width="212" height="26" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="606" y="213" text-anchor="middle">任务队列 asynq</text>
+      <rect x="724" y="196" width="224" height="26" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="836" y="213" text-anchor="middle">Langfuse 可观测</text>
+
+      <rect x="52" y="230" width="896" height="26" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="500" y="247" text-anchor="middle">模型 Provider 注册表（OpenAI 兼容 = 零代码接入任何国产/内网模型服务）</text>
+    </g>
+
+    <line x1="500" y1="270" x2="500" y2="294" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar)"/>
+    <text x="514" y="287" font-size="11" fill="#64748b">gRPC :50051</text>
+
+    <!-- L3 解析 -->
+    <rect x="30" y="296" width="940" height="82" rx="10" fill="#fffaf5" stroke="#ea580c" stroke-width="2"/>
+    <text x="52" y="322" font-size="15" font-weight="700" fill="#c2410c">docreader（解析服务）</text>
+    <text x="248" y="322" font-size="12.5" fill="#64748b">Python 3.10 · 纯 gRPC · 无 HTTP 接口 · 只做「文件/URL → Markdown + 图片」</text>
+    <g font-size="11.5" fill="#334155">
+      <rect x="52" y="334" width="290" height="26" rx="6" fill="#fff" stroke="#fed7aa"/>
+      <text x="197" y="351" text-anchor="middle">PDF / DOCX / XLSX / PPT / EPUB / XMind</text>
+      <rect x="354" y="334" width="200" height="26" rx="6" fill="#fff" stroke="#fed7aa"/>
+      <text x="454" y="351" text-anchor="middle">LibreOffice 格式转换</text>
+      <rect x="566" y="334" width="180" height="26" rx="6" fill="#fff" stroke="#fed7aa"/>
+      <text x="656" y="351" text-anchor="middle">Playwright 网页抓取</text>
+      <rect x="758" y="334" width="190" height="26" rx="6" fill="#fff" stroke="#fed7aa"/>
+      <text x="853" y="351" text-anchor="middle">MarkItDown / ODL / MinerU</text>
+    </g>
+
+    <line x1="500" y1="378" x2="500" y2="402" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar)"/>
+
+    <!-- L4 数据 -->
+    <rect x="30" y="404" width="940" height="62" rx="10" fill="#f6fefb" stroke="#059669" stroke-width="2" style="fill:#f6fffb"/>
+    <text x="52" y="428" font-size="15" font-weight="700" fill="#047857">数据层</text>
+    <g font-size="11.5" fill="#334155">
+      <rect x="140" y="412" width="270" height="26" rx="6" fill="#fff" stroke="#a7f3d0"/>
+      <text x="275" y="429" text-anchor="middle">ParadeDB（PG17 + pg_search BM25 + pgvector）</text>
+      <rect x="422" y="412" width="150" height="26" rx="6" fill="#fff" stroke="#a7f3d0"/>
+      <text x="497" y="429" text-anchor="middle">Redis 7</text>
+      <rect x="584" y="412" width="364" height="26" rx="6" fill="#fff" stroke="#a7f3d0"/>
+      <text x="766" y="429" text-anchor="middle">对象存储：local / MinIO / COS / TOS / S3 / OSS / OBS / KS3</text>
+    </g>
+  </svg>
+  </div>
+</section>
+
+<!-- ============ 2. 入库链路 ============ -->
+<section>
+  <h2><span class="num">2</span>PDF / DOCX / XLSX 入库链路</h2>
+  <p class="sub">不需要任何外部转换工具——转换能力已内置在 docreader 镜像里。</p>
+  <div class="svgbox">
+  <svg viewBox="0 0 1000 470" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,PingFang SC,sans-serif">
+    <defs>
+      <marker id="ar2" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#cbd5e1"/>
+      </marker>
+    </defs>
+
+    <!-- 步骤轴 -->
+    <line x1="74" y1="34" x2="74" y2="440" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="4 4"/>
+
+    <!-- Step 1 -->
+    <circle cx="74" cy="48" r="15" fill="#2563eb"/>
+    <text x="74" y="53" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">1</text>
+    <rect x="104" y="26" width="866" height="46" rx="8" fill="#f8fbff" stroke="#bfdbfe"/>
+    <text x="122" y="46" font-size="13.5" font-weight="700" fill="#1e40af">创建知识库</text>
+    <text x="122" y="63" font-size="11.5" fill="#475569">定 Embedding 模型 + 向量库 + 存储后端 —— 前两项后期基本不可逆</text>
+    <text x="932" y="53" text-anchor="end" font-size="11" font-weight="700" fill="#dc2626">关键</text>
+
+    <!-- Step 2 -->
+    <circle cx="74" cy="118" r="15" fill="#2563eb"/>
+    <text x="74" y="123" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">2</text>
+    <rect x="104" y="96" width="866" height="46" rx="8" fill="#fff" stroke="#e2e8f0"/>
+    <text x="122" y="116" font-size="13.5" font-weight="700" fill="#0f172a">上传</text>
+    <text x="122" y="133" font-size="11.5" fill="#475569">UI 文件/文件夹树上传 · URL 导入 · REST API <tspan font-family="ui-monospace,Menlo,monospace" font-size="11">POST /knowledge-bases/:id/knowledge/file</tspan> · 外部数据源同步</text>
+
+    <!-- Step 3 -->
+    <circle cx="74" cy="188" r="15" fill="#7c3aed"/>
+    <text x="74" y="193" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">3</text>
+    <rect x="104" y="166" width="866" height="46" rx="8" fill="#faf8ff" stroke="#ddd6fe"/>
+    <text x="122" y="186" font-size="13.5" font-weight="700" fill="#5b21b6">Go 侧按格式分流</text>
+    <text x="122" y="203" font-size="11.5" fill="#475569">md/txt/csv/json/图片/音频 → Go 进程内直接处理；PDF/DOCX/XLSX/PPT → 转 docreader</text>
+
+    <!-- Step 4 -->
+    <circle cx="74" cy="258" r="15" fill="#ea580c"/>
+    <text x="74" y="263" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">4</text>
+    <rect x="104" y="236" width="866" height="46" rx="8" fill="#fffaf5" stroke="#fed7aa"/>
+    <text x="122" y="256" font-size="13.5" font-weight="700" fill="#c2410c">docreader 解析（gRPC ReadStream）</text>
+    <text x="122" y="273" font-size="11.5" fill="#475569">先回 1 帧 Markdown 正文，之后每帧回 1 张图片（inline bytes，避免大文件撞消息上限）</text>
+
+    <!-- Step 5 -->
+    <circle cx="74" cy="328" r="15" fill="#ea580c"/>
+    <text x="74" y="333" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">5</text>
+    <rect x="104" y="306" width="866" height="46" rx="8" fill="#fff" stroke="#e2e8f0"/>
+    <text x="122" y="326" font-size="13.5" font-weight="700" fill="#0f172a">图片落盘 + OCR + caption</text>
+    <text x="122" y="343" font-size="11.5" fill="#475569">图片持久化到存储后端、重写 Markdown 引用；扫描页调 VLM 做 OCR，插图生成描述</text>
+
+    <!-- Step 6 -->
+    <circle cx="74" cy="398" r="15" fill="#7c3aed"/>
+    <text x="74" y="403" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">6</text>
+    <rect x="104" y="376" width="866" height="46" rx="8" fill="#faf8ff" stroke="#ddd6fe"/>
+    <text x="122" y="396" font-size="13.5" font-weight="700" fill="#5b21b6">分块 + 向量化 + 建索引</text>
+    <text x="122" y="413" font-size="11.5" fill="#475569">auto / heading / heuristic / recursive / legacy 五策略，支持父子分块；分块可在 UI 人工编辑并回滚</text>
+
+    <!-- 完成标记 -->
+    <circle cx="74" cy="452" r="10" fill="#059669"/>
+    <path d="M69.5,452 l3,3.2 l5.5,-6.5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="94" y="457" font-size="12.5" font-weight="700" fill="#047857">可检索</text>
+
+    <line x1="74" y1="63" x2="74" y2="103" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ar2)"/>
+    <line x1="74" y1="142" x2="74" y2="173" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ar2)"/>
+    <line x1="74" y1="203" x2="74" y2="243" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ar2)"/>
+    <line x1="74" y1="282" x2="74" y2="313" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ar2)"/>
+    <line x1="74" y1="352" x2="74" y2="383" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ar2)"/>
+    <line x1="74" y1="422" x2="74" y2="442" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ar2)"/>
+  </svg>
+  </div>
+  <div class="note">
+    <b>格式 → 解析器归属：</b>xlsx/xls → <code>ExcelParser</code>（openpyxl/xlrd/pandas）｜docx → <code>Docx2Parser</code>（python-docx，失败回落 MarkItDown）｜doc → <code>DocParser</code>（antiword）｜pdf → <code>PDFParser</code>（pypdfium2 + pypdf）｜ppt/pptx → MarkItDown 引擎。
+  </div>
+</section>
+
+<!-- ============ 3. 隔离与共享 ============ -->
+<section>
+  <h2><span class="num">3</span>多领域隔离与跨领域共享</h2>
+  <p class="sub">隔离靠 Tenant（空间）+ <code>tenant_id</code> 行级过滤；共享只有「整库」和「Agent 只读」两种粒度。</p>
+  <div class="svgbox">
+  <svg viewBox="0 0 1000 430" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,PingFang SC,sans-serif">
+    <!-- 左：隔离 -->
+    <text x="30" y="26" font-size="14" font-weight="700" fill="#1e40af">隔离：一个领域 = 一个 Tenant（工作区）</text>
+
+    <rect x="30" y="42" width="480" height="130" rx="10" fill="#fff" stroke="#059669" stroke-width="2"/>
+    <text x="48" y="66" font-size="12.5" font-weight="700" fill="#047857">数据库（共享表 + 行级过滤，非物理隔离）</text>
+    <rect x="48" y="78" width="444" height="30" rx="6" fill="#f8fbff" stroke="#bfdbfe"/>
+    <text x="62" y="98" font-size="11.5" fill="#334155">财务领域　<tspan font-family="ui-monospace,Menlo,monospace" font-size="11">tenant_id = 1</tspan></text>
+    <rect x="48" y="112" width="444" height="30" rx="6" fill="#faf8ff" stroke="#ddd6fe"/>
+    <text x="62" y="132" font-size="11.5" fill="#334155">法律领域　<tspan font-family="ui-monospace,Menlo,monospace" font-size="11">tenant_id = 2</tspan></text>
+    <rect x="48" y="146" width="444" height="20" rx="6" fill="#fffaf5" stroke="#fed7aa"/>
+    <text x="62" y="161" font-size="11.5" fill="#334155">医疗领域　<tspan font-family="ui-monospace,Menlo,monospace" font-size="11">tenant_id = 3</tspan></text>
+
+    <rect x="30" y="186" width="480" height="86" rx="10" fill="#f6fffb" stroke="#a7f3d0"/>
+    <text x="48" y="208" font-size="12.5" font-weight="700" fill="#047857">领域内二次细分</text>
+    <text x="48" y="228" font-size="11.5" fill="#475569">RBAC 四级角色：Owner(40) &gt; Admin(30) &gt; Contributor(20) &gt; Viewer(10)</text>
+    <text x="48" y="248" font-size="11.5" fill="#475569">资源归属 creator_id：改自己建的 vs 改他人建的，权限不同</text>
+    <text x="48" y="266" font-size="11.5" fill="#475569">tenant_api_keys：可按「能力 + 指定 KB 列表」限定作用域</text>
+
+    <!-- 右：共享 -->
+    <text x="540" y="26" font-size="14" font-weight="700" fill="#6d28d9">共享：只能通过 Organization（组织）</text>
+
+    <rect x="540" y="42" width="430" height="60" rx="10" fill="#faf8ff" stroke="#7c3aed" stroke-width="2"/>
+    <text x="560" y="66" font-size="13" font-weight="700" fill="#5b21b6">Organization（跨领域共享容器）</text>
+    <text x="560" y="86" font-size="11.5" fill="#475569">需双方 Tenant 加入同一组织，不能点对点直接授权</text>
+
+    <rect x="540" y="118" width="430" height="66" rx="8" fill="#fff" stroke="#ddd6fe"/>
+    <text x="558" y="140" font-size="12.5" font-weight="700" fill="#5b21b6">kb_shares —— 整个知识库</text>
+    <text x="558" y="159" font-size="11.5" fill="#475569">粒度：viewer / editor　｜　表：<tspan font-family="ui-monospace,Menlo,monospace" font-size="11">kb_shares</tspan></text>
+    <text x="558" y="176" font-size="11.5" fill="#dc2626">✕ 不支持共享单文档 / 单分块</text>
+
+    <rect x="540" y="196" width="430" height="56" rx="8" fill="#fff" stroke="#ddd6fe"/>
+    <text x="558" y="218" font-size="12.5" font-weight="700" fill="#5b21b6">agent_shares —— Agent</text>
+    <text x="558" y="237" font-size="11.5" fill="#dc2626">✕ 仅只读，不可写</text>
+
+    <!-- 左（隔离）与右（共享）为并列概念，无需连线 -->
+
+    <!-- 限制横幅 -->
+    <rect x="30" y="296" width="940" height="118" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="2"/>
+    <text x="50" y="322" font-size="13.5" font-weight="700" fill="#991b1b">⚠ 计划多领域部署前必须知道的 3 条硬限制</text>
+    <text x="50" y="346" font-size="12" fill="#7f1d1d">① Tenant 无 parent_id，<tspan font-weight="700">不支持子空间</tspan>——领域之下不能再分层（只能靠 KB 命名或文件夹树模拟）</text>
+    <text x="50" y="368" font-size="12" fill="#7f1d1d">② 默认版本（ParadeDB / Postgres）的向量库<tspan font-weight="700">白名单不含 Postgres/SQLite</tspan>，无法配多实例。所有领域共用</text>
+    <text x="72" y="386" font-size="12" fill="#7f1d1d">同一张 embeddings 物理表，<tspan font-weight="700">只能做到逻辑隔离</tspan></text>
+    <text x="50" y="406" font-size="12" fill="#7f1d1d">③ 想要向量层<tspan font-weight="700">物理隔离</tspan>，须改接 Qdrant / Milvus / ES / OpenSearch / Weaviate / Doris / 腾讯云 VectorDB 之一</text>
+  </svg>
+  </div>
+</section>
+
+<!-- ============ 4. 内网依赖 ============ -->
+<section>
+  <h2><span class="num">4</span>内网（无互联网）部署依赖</h2>
+  <p class="sub">除内网 LLM API 外，还必须准备离线镜像与 Embedding API —— 后者最易被漏掉。</p>
+
+  <div class="grid g4">
+    <div class="card" style="border-color:#bfdbfe">
+      <div class="t"><span class="dot" style="background:#2563eb"></span>① 离线镜像<span class="req r-must">必须</span></div>
+      <div class="d">
+        weknora-app / weknora-ui<br>
+        <b>weknora-docreader</b>（最大，含 LibreOffice + Playwright + JDK）<br>
+        paradedb:v0.22.6-pg17 / redis:7.0-alpine<br>
+        <span style="color:#b45309">用 docker save/load 或私有 registry 搬运</span>
+      </div>
+    </div>
+    <div class="card" style="border-color:#fecaca">
+      <div class="t"><span class="dot" style="background:#dc2626"></span>② Embedding API<span class="req r-must">必须</span></div>
+      <div class="d">
+        <b>没有它完全无法入库与检索</b>，比 LLM 更底层。<br>
+        接口：OpenAI 兼容 <code>/v1/embeddings</code><br>
+        <span style="color:#b45309">仓库内无任何本地模型文件，全为远程 API</span>
+      </div>
+    </div>
+    <div class="card" style="border-color:#fecaca">
+      <div class="t"><span class="dot" style="background:#dc2626"></span>③ LLM API<span class="req r-must">必须</span></div>
+      <div class="d">
+        问答 / 摘要 / Agent 依赖。<br>
+        接口：OpenAI 兼容 <code>/v1/chat/completions</code><br>
+        UI 配置或声明式 <code>config/builtin_models.yaml</code>（支持 ${ENV}）
+      </div>
+    </div>
+    <div class="card" style="border-color:#e2e8f0">
+      <div class="t"><span class="dot" style="background:#64748b"></span>④ 中间件<span class="req r-opt">随镜像自带</span></div>
+      <div class="d">
+        ParadeDB（PG17 + BM25 + pgvector）+ Redis 7<br>
+        <span style="color:#047857">✓ 由 compose 提供，无需额外准备</span>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="font-size:14px;margin:26px 0 4px">可选的模型能力（按需，不配即不启用）</h3>
+  <table>
+    <tr><th style="width:110px">用途</th><th style="width:100px">必须性</th><th>缺失时的现象</th></tr>
+    <tr><td><b>Rerank</b></td><td><span style="color:#b45309;font-weight:700">强烈建议</span></td><td>检索质量下降（可关闭，不影响主链路）</td></tr>
+    <tr><td><b>VLM</b></td><td><span style="color:#64748b;font-weight:700">可选</span></td><td>扫描件 PDF / 图片无法出文字与语义描述</td></tr>
+    <tr><td><b>ASR</b></td><td><span style="color:#64748b;font-weight:700">可选</span></td><td>音频文件无法转写</td></tr>
+  </table>
+
+  <h3 style="font-size:14px;margin:26px 0 4px">默认配置里 8 处会主动出网的位置（逐个处置）</h3>
+  <table>
+    <tr><th style="width:190px">联网点</th><th style="width:230px">默认行为</th><th>处置</th></tr>
+    <tr><td>Ollama</td><td><code>host.docker.internal:11434</code></td><td>内网替代，或 <code>OLLAMA_OPTIONAL=true</code>（仅告警不阻断）</td></tr>
+    <tr><td>网络搜索</td><td>DuckDuckGo/Bing/Google/Tavily/Baidu/Exa/Metaso</td><td>不配置即不启用</td></tr>
+    <tr><td>数据源同步</td><td>飞书 / Notion / 语雀 / GitLab / IMA / RSS</td><td>不配置即不启用</td></tr>
+    <tr><td>Langfuse</td><td><code>cloud.langfuse.com</code></td><td>关闭，或内网自建（<code>--profile langfuse</code>）</td></tr>
+    <tr><td>对象存储</td><td>COS / TOS / S3 / OSS / OBS / KS3</td><td>用 <code>STORAGE_TYPE=local</code> 或内网 MinIO</td></tr>
+    <tr><td>外部解析服务</td><td>MinerU / PaddleOCR-VL</td><td>不配置即不启用</td></tr>
+    <tr><td>Agent 沙箱</td><td>Docker / E2B / Cube</td><td><span style="color:#047857;font-weight:700">默认关闭</span>，无需处理</td></tr>
+    <tr><td>前端图标 CDN</td><td><code>tdesign.gtimg.com</code></td><td><span style="color:#047857;font-weight:700">✓ 已内置离线保护</span>，图标本地化</td></tr>
+  </table>
+
+  <div class="note alert">
+    <b>不要在内网源码编译。</b>构建期存在多处联网：<code>Dockerfile.app</code> 拉 uv 安装脚本、<code>Dockerfile.docreader</code> 下载 protoc 与 Playwright webkit 内核、<code>build_browserskill.sh</code> git clone、前端 npm 依赖。<br>
+    <b>推荐做法：外网 <code>docker compose pull</code> → <code>docker save</code> → 内网 <code>docker load</code>。</b>
+  </div>
+</section>
+
+<footer>
+  依据 WeKnora v0.8.0 源码与 <code>website-docs/</code> 官方文档核对生成 ｜ 详细证据见同目录分析报告
+</footer>
+
+</div>
+</body>
+</html>
