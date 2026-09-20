@@ -178,6 +178,33 @@
 > **脚本已加保护**：检测到本地构建镜像时会拒绝 pull 并自动改用 `build`。
 > 确实要回到官方镜像：`WKJ_ALLOW_PULL_OVERWRITE=1 ./deploy/deploy-wkj-dev.sh update`
 
+> ### ⚠️ 先看清楚：`build` 到底会升什么版本
+>
+> `wkj-dev` 相对上游 `main` **只多了部署产物**（`my-docs/`、`my-docker/`、`deploy/`、
+> `README-WAKE.md`），**`internal/` `frontend/` `docreader/` 尚无源码改动**。
+> 也就是说：只要还没动源码，`build` 的净效果 = **把线上升级到上游最新版**。
+>
+> 2026-09-20 首次 build 时的实测差距：
+>
+> | 项 | 值 |
+> |---|---|
+> | 线上镜像构建于 | `2026-09-03` |
+> | 上游领先提交数 | **185** |
+> | 改动文件数（按目录） | `internal` 1704 / `frontend` 1118 / **`migrations` 63** / `config` 38 / `docreader` 6 |
+>
+> ⇒ 这是一次**跨 185 个提交的版本升级**，启动时会执行 `AUTO_MIGRATE` 跑 63 个迁移文件。
+> **数据不会被清**（迁移是增量演进），但表结构会变 —— 因此每次 build 前都应先备份：
+>
+> ```bash
+> ssh nanning-111 "cd /mnt/data/weknora && DBPW=\$(grep -m1 '^DB_PASSWORD=' .env | cut -d= -f2-) && \
+>   mkdir -p /mnt/data/backups/weknora && \
+>   docker exec -e PGPASSWORD=\$DBPW WeKnora-postgres pg_dump -U postgres -d WeKnora -Fc \
+>   > /mnt/data/backups/weknora/pre-build-\$(date +%Y%m%d-%H%M%S).dump"
+> ```
+>
+> `docreader` 那 6 个文件是 **SSRF 代理 + `web_parser.py`**（安全相关，且正是"导入 URL"
+> 用到的组件）⇒ **不能跳过构建 docreader**。所幸 **proto 未变**，gRPC 契约兼容。
+
 ```bash
 # 1. 本地改代码
 cd /Users/weikejia/CODE/my-agent-group/projects/rag-tools/WeKnora
@@ -196,7 +223,7 @@ ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '
 
 > **`build` 模式耗时较长**：Go 编译 + 前端 npm 构建 + docreader 镜像，首次可能 20~40 分钟（111 是 32 核，比本机快）。之后有构建缓存会快很多。
 
-#### 2.4.0 怎么确认线上跑的是哪一版（已支持直接查）
+#### 2.4.1 怎么确认线上跑的是哪一版（已支持直接查）
 
 `build` 时会自动注入版本信息，所以**不需要**再去猜。查证方式：
 
@@ -224,7 +251,7 @@ ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest \
 > （如官方镜像报 `knowledge_process.go:3414`、wkj-dev 报 `3601`）。这正是我们加 `[差异 4]` 的原因。
 > 另外 `.dockerignore` 排除了 `.git/`，`VERSION` 的 `git describe` 必然失败，只能靠 `VERSION_ARG` 兜底。
 
-#### 2.4.1 111 上构建的前置条件（✅ 已由 `my-docker/` 解决）
+#### 2.4.2 111 上构建的前置条件（✅ 已由 `my-docker/` 解决）
 
 111 **无法直连** `registry-1.docker.io` 与 `proxy.golang.org`。构建期必须联网的几处：
 
@@ -258,6 +285,50 @@ ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest \
 
 > `config-hash` 只覆盖**运行时**字段（镜像/环境变量/挂载/端口），不含 `build.args` ——
 > 这正是「站点定制只影响构建、不影响运行」的机制保证。
+
+#### 2.4.3 构建踩过的三个坑（都已在脚本里加了防护）
+
+**坑 1：`APT_MIRROR` 的取值语义 —— 只能给「带 scheme 的 base、不含路径」**
+
+`Dockerfile.docreader` 是这么换源的（第 8 行，两个阶段各一次）：
+
+```sh
+sed -i "s@http://deb.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources
+```
+
+而 `debian.sources` 里本身已带 `/debian` 与 `/debian-security`。所以：
+
+| 给的值 | 拼出来的 URI | 结果 |
+|---|---|---|
+| `https://mirrors.tencent.com` | `https://mirrors.tencent.com/debian` | ✅ 正确 |
+| `https://mirrors.tencent.com/debian` | `https://mirrors.tencent.com/debian/debian` | ❌ 404 → `apt` exit 100 |
+
+> 注意 `APK_MIRROR_ARG`（`Dockerfile.app`）的 `sed` 只替换**主机名**，所以要给
+> `mirrors.tencent.com`。**两个参数语义不同，别混。**
+
+**坑 2：`apt-get update` 有「假成功」**
+
+索引全部下载失败时，`apt-get update -qq` **仍然返回 0**（只在 stderr 打 warning）。
+只看退出码会误判为成功。必须同时查「命中的索引文件数」：
+
+```bash
+ls /var/lib/apt/lists/ | grep -c _Packages    # 0 = 实际什么都没拿到
+```
+
+**坑 3：判断源能不能用，必须以「实际使用该源的基镜像」为准**
+
+`docreader` 的两个阶段（builder + runner）**都是** `python:3.10.18-bookworm`（非 slim，
+基于 `buildpack-deps`，**自带 CA 证书**）⇒ https 源完全可用。
+但若拿**裸 `debian:12.12-slim`**（无 CA）去测同样的 https 源，会得出「证书失败、
+必须用 http」的**相反结论**。
+
+> 实测对比（同一台 111）：正确基镜像 + 腾讯 https 源 → **17 秒**通过；
+> 错误基镜像 + 阿里云 http 源 → 8 分 43 秒（且仍属勉强可用）。
+> **用错探测载体，会把一个 17 秒的正解判死。**
+
+为此脚本新增 `_preflight_build_sources()`：构建前**秒级**校验
+`APT_MIRROR` / `GOPROXY_ARG` / `NPM_REGISTRY` 是否 `200 且不跳转`，不过则中止 ——
+避免把源配置问题拖成 30 分钟后的构建失败。
 
 ### 2.5 改 `.env` 后的生效方式
 
@@ -416,7 +487,7 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 ## 六、待办 / 注意事项
 
 - [ ] **🔴 生产尚未跑你的二开代码**：当前 111 运行的是官方 `2026-09-03` 镜像（`RepoDigests` 非空已证实）。
-      构建前置条件已就绪（见 2.4.1，已由 `my-docker/` 解决），**下一步只需拍板执行**：
+      构建前置条件已就绪（见 2.4.2，已由 `my-docker/` 解决），**下一步只需拍板执行**：
       `./deploy/deploy-wkj-dev.sh build`（首次约 20~40 分钟；失败会停在 `up -d` 之前，不影响在跑的容器）。
 - [ ] **首次部署后建议做的加固**：把 `DISABLE_REGISTRATION` 改为 `true`（注册完管理员账号之后）。
 - [ ] **备份策略**：目前数据只在 111 单机机械盘，`/mnt/data` 无备份。数据库（`weknora_postgres-data` 卷）应纳入备份。
