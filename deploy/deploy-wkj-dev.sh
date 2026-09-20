@@ -308,6 +308,53 @@ _preflight_build_sources() {
   fi
 }
 
+# ── 预置构建产物：把「本网络下载不稳」的依赖先备好 ────────────────────────
+# 为什么需要：111（及本机）能访问 GitHub Releases，但很慢且会中断
+#   （实测 ~40KB/s；构建里 curl 无重试 ⇒ 报 exit 18 传输中断）。
+# 为什么用预置而不是换镜像源：
+#   · Dockerfile.docreader 本来就带离线分支（第 31 行 COPY packages/ → 第 52 行
+#     `if [ -f /app/packages/${PROTOC_PACKAGE} ]` 走离线安装）⇒ 预置即用，
+#     **官方 Dockerfile 一个字都不用改**，也不引入第三方 GitHub 反代
+#     （避免把生产镜像的二进制信任交给不可控的第三方）。
+# 完整性：sha256 经**三条独立路径交叉验证**（本机 Mac / 110 / 111 各自下载，
+#   哈希完全一致 1699853 字节）。表里的哈希即校验基准。
+# 幂等：文件在位且哈希正确就跳过；否则重下。写入 .git/info/exclude 保持工作区
+#   干净（sync_code 用 git status 判断能否安全 reset）。
+declare -A BUILD_ARTIFACTS=(
+  ["packages/protoc-3.19.4-linux-x86_64.zip"]="https://github.com/protocolbuffers/protobuf/releases/download/v3.19.4/protoc-3.19.4-linux-x86_64.zip|058d29255a08f8661c8096c92961f3676218704cbd516d3916ec468e139cbd87"
+)
+
+_ensure_build_artifacts() {
+  local rel entry url want cur
+  echo "  预置构建产物（走离线分支，免受网络抖动影响）..."
+  for rel in "${!BUILD_ARTIFACTS[@]}"; do
+    entry="${BUILD_ARTIFACTS[$rel]}"
+    url="${entry%%|*}"
+    want="${entry##*|}"
+
+    mkdir -p "$(dirname "$rel")"
+    grep -qxF "/$rel" .git/info/exclude 2>/dev/null || echo "/$rel" >> .git/info/exclude
+
+    if [ -f "$rel" ] && [ "$(sha256sum "$rel" | awk '{print $1}')" = "$want" ]; then
+      echo "    ✔ 已就绪且校验通过：$rel"
+      continue
+    fi
+
+    echo "    ↓ 下载 $rel（本网络较慢，可能需 1-2 分钟）"
+    curl -fL --retry 6 --retry-all-errors --retry-delay 3 -C - --max-time 900 -o "$rel" "$url" \
+      || { echo "    ✘ 下载失败：$url"; exit 1; }
+
+    cur=$(sha256sum "$rel" | awk '{print $1}')
+    if [ "$cur" != "$want" ]; then
+      echo "    ✘ 哈希校验失败"
+      echo "      期望 $want"
+      echo "      实得 $cur"
+      exit 1
+    fi
+    echo "    ✔ 已下载并校验通过：$rel"
+  done
+}
+
 # 构建时注入版本信息，使「跑的是哪一版」可查证。
 # 生效链路：compose 的 build.args → Dockerfile.app builder 阶段的 ENV
 #   → Makefile:256-259 从环境变量取 → ldflags -X 写进二进制
@@ -322,6 +369,7 @@ _build_with_version() {
   export VITE_FRONTEND_COMMIT="$WKJ_BUILD_COMMIT"
   echo "  注入版本信息：version=$WKJ_BUILD_VERSION commit=$WKJ_BUILD_COMMIT"
   _preflight_build_sources
+  _ensure_build_artifacts
   $DC build
 }
 
