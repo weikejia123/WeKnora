@@ -52,8 +52,10 @@
 #   · docker/Dockerfile.app      : RUSTUP_DIST_SERVER_ARG / RUSTUP_UPDATE_ROOT_ARG /
 #                                 GH_PROXY（git insteadOf）/ NPM_REGISTRY_ARG / CARGO_REGISTRY_ARG
 #   · docker/Dockerfile.docreader: GH_PROXY（protoc 与 grpc_health_probe 两处 URL 前缀）
-#   ⚠️ 已知上游疏漏（**未改，留作改动过大时的备选**）：`Dockerfile.app` 的 browserskill 阶段
-#      未处理 `APK_MIRROR_ARG` ⇒ 该阶段性走 deb.debian.org（实测比腾讯源慢，但能完成）。
+#   · docker/Dockerfile.app 的 browserskill 阶段也补了 apt 换源（官方原版该阶段未处理
+#     `APK_MIRROR_ARG`，属上游疏漏）。★ 但该阶段基镜像是 **slim 变体、不自带 ca-certificates**，
+#     而 mirrors.tencent.com 的 http 会 **302 跳 https** ⇒ 必须**先用官方源装 CA、再换源**
+#     （与同文件 final 阶段 :161 的处理同构）。实测：先装 CA 150s，换源后再 update 2s。
 #
 #   为什么不用 --build-arg 或 override 文件：`docker compose build` 不支持
 #   --build-arg；而额外 override 文件会引入「需手工同步」的中间产物。
