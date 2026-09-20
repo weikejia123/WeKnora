@@ -36,7 +36,20 @@
 #                              "111 跑的到底是哪一版"无法查证，只能靠日志行号反推。
 #                              传了之后可经 GET /api/v1/system/info 的 commit_id 直接读。
 #                              值由部署脚本在 111 上按当前 git 状态注入）
-#   除上述四处，其余内容与官方**逐字一致**。全部可用 .env 覆盖。
+#   [5] app.build.args        + RUSTUP_DIST_SERVER_ARG / RUSTUP_UPDATE_ROOT_ARG
+#                             （官方回落 static.rust-lang.org，本网络实测 ~36KB/s，
+#                              工具链约 300MB ⇒ 2 小时；国内镜像 >1MB/s）
+#   [6] docreader.build.args  + GH_PROXY
+#                             （官方直连 github.com，本网络实测 0~40KB/s 且常中断；
+#                              反代 ~271KB/s，产物 sha256 与官方一致）
+#   除上述六处，其余内容与官方**逐字一致**。全部可用 .env 覆盖。
+#
+# ★ 另有一类站点适配在 Dockerfile 里（因为 compose 只能给 build.args，无法改 RUN 逻辑）：
+#   均为「新增中性 ARG、留空即官方行为」的形式，站点值仍由本文件的 build.args 注入：
+#   · docker/Dockerfile.app      : RUSTUP_DIST_SERVER_ARG / RUSTUP_UPDATE_ROOT_ARG
+#   · docker/Dockerfile.docreader: GH_PROXY（protoc 与 grpc_health_probe 两处 URL 前缀）
+#   改动理由与上游疏漏：`Dockerfile.app` 的 browserskill 阶段未处理 `APK_MIRROR_ARG`
+#   （上游该参数的设计意图就是国内构建），需要时也应在此处补。
 #
 #   为什么不用 --build-arg 或 override 文件：`docker compose build` 不支持
 #   --build-arg；而额外 override 文件会引入「需手工同步」的中间产物。
@@ -105,6 +118,13 @@ services:
         - VERSION_ARG=${WKJ_BUILD_VERSION:-unknown}
         - COMMIT_ID_ARG=${WKJ_BUILD_COMMIT:-unknown}
         - BUILD_TIME_ARG=${WKJ_BUILD_TIME:-unknown}
+        # [差异 5] Rust 工具链下载源。官方 static.rust-lang.org 在本网络实测仅
+        #         ~36KB/s（工具链约 300MB ⇒ 2 小时），而国内镜像 >1MB/s（快约 50 倍）。
+        #         配合 Dockerfile.app 新增的 RUSTUP_DIST_SERVER_ARG /
+        #         RUSTUP_UPDATE_ROOT_ARG（留空即回落官方行为，不影响上游语义）。
+        #         备选：https://mirrors.ustc.edu.cn/rust-static（rustup 路径 /rustup）
+        - RUSTUP_DIST_SERVER_ARG=${RUSTUP_DIST_SERVER_ARG:-https://rsproxy.cn}
+        - RUSTUP_UPDATE_ROOT_ARG=${RUSTUP_UPDATE_ROOT_ARG:-https://rsproxy.cn/rustup}
     container_name: WeKnora-app
     ports:
       - "${APP_PORT:-8080}:8080"
@@ -474,6 +494,12 @@ services:
         #           `https://mirrors.tencent.com/debian` 会拼成
         #           `.../debian/debian` → apt 404 → 构建失败（exit 100）。
         - APT_MIRROR=${APT_MIRROR:-https://mirrors.tencent.com}
+        # [差异 6] GitHub 访问加速前缀。直连 github.com 在本网络实测 0~40KB/s
+        #         （11MB 的 grpc_health_probe 常中断），反代实测 ~271KB/s。
+        #         内容可信性：实测下载产物 sha256 与官方三方交叉验证值完全一致。
+        #         配合 Dockerfile.docreader 新增的 GH_PROXY（留空即官方行为）。
+        #         备选：https://ghfast.top/（实测 ~189KB/s）
+        - GH_PROXY=${GH_PROXY:-https://gh-proxy.com/}
     container_name: WeKnora-docreader
     # docreader gRPC ships without auth/TLS and is only consumed by the app
     # container over the WeKnora-network (DOCREADER_ADDR defaults to

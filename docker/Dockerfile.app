@@ -6,7 +6,16 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+# Rust 工具链下载源（可选，留空 = 官方 static.rust-lang.org）。
+# 为什么需要：部分网络下 static.rust-lang.org 极慢（实测 36KB/s，工具链约 300MB ⇒ 2 小时），
+# 而国内镜像实测快 2 个数量级（rsproxy.cn / ustc / aliyun 均 >1MB/s）。
+# 站点值由 compose 的 build.args 注入（见 my-docker/docker-compose.yml）。
+ARG RUSTUP_DIST_SERVER_ARG=""
+ARG RUSTUP_UPDATE_ROOT_ARG=""
+RUN if [ -n "$RUSTUP_DIST_SERVER_ARG" ]; then \
+        export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER_ARG" RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT_ARG"; \
+    fi && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
 COPY scripts/build_browserskill.sh scripts/browserskill-release.json ./scripts/
 COPY patches/browserskill ./patches/browserskill
 ARG TARGETOS
@@ -23,6 +32,9 @@ ARG GOPRIVATE_ARG
 ARG GOPROXY_ARG
 ARG GOSUMDB_ARG=off
 ARG APK_MIRROR_ARG
+# Rust 工具链下载源（可选，留空 = 官方 static.rust-lang.org）；见 browserskill 阶段的说明
+ARG RUSTUP_DIST_SERVER_ARG=""
+ARG RUSTUP_UPDATE_ROOT_ARG=""
 
 # 设置Go环境变量
 ENV GOPRIVATE=${GOPRIVATE_ARG}
@@ -71,6 +83,9 @@ ENV PATH=/usr/local/cargo/bin:$PATH
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_ANYDOC" = "1" ]; then \
+        if [ -n "$RUSTUP_DIST_SERVER_ARG" ]; then \
+            export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER_ARG" RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT_ARG"; \
+        fi && \
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --profile minimal --default-toolchain stable && \
         ./scripts/build-anydoc-lib.sh; \

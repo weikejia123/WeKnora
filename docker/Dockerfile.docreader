@@ -4,6 +4,11 @@
 FROM python:3.10.18-bookworm AS builder
 
 ARG APT_MIRROR=""
+# GitHub 访问加速前缀（可选，留空 = 直连 github.com）。
+# 为什么需要：部分网络下 GitHub Release 直连极慢或直接失败（实测 0~40KB/s），
+# 反代可到 ~271KB/s。填 `https://gh-proxy.com/` 这类前缀；内容仍可用哈希校验。
+# 站点值由 compose 的 build.args 注入（见 my-docker/docker-compose.yml）。
+ARG GH_PROXY=""
 RUN if [ -n "$APT_MIRROR" ]; then \
         sed -i "s@http://deb.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources && \
         sed -i "s@http://security.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources; \
@@ -57,7 +62,7 @@ RUN if [ -z "$TARGETARCH" ]; then \
         rm -f /app/${PROTOC_PACKAGE}; \
     else \
         echo "未发现本地protoc安装包，将进行在线安装"; \
-        curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.19.4/${PROTOC_PACKAGE} && \
+        curl -LO "${GH_PROXY}https://github.com/protocolbuffers/protobuf/releases/download/v3.19.4/${PROTOC_PACKAGE}" && \
         unzip -o ${PROTOC_PACKAGE} -d /usr/local && \
         chmod +x /usr/local/bin/protoc && \
         rm -f ${PROTOC_PACKAGE}; \
@@ -82,6 +87,8 @@ RUN chmod +x docreader/scripts/generate_proto.sh && \
 FROM python:3.10.18-bookworm AS runner
 
 ARG APT_MIRROR=""
+# GitHub 访问加速前缀（可选，留空 = 直连 github.com）；说明见 builder 阶段
+ARG GH_PROXY=""
 RUN if [ -n "$APT_MIRROR" ]; then \
         sed -i "s@http://deb.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources && \
         sed -i "s@http://security.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources; \
@@ -132,7 +139,7 @@ RUN if [ -z "$TARGETARCH" ]; then \
         "arm") ARCH="arm" ;; \
         *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
     esac && \
-    wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-${ARCH} && \
+    wget -qO/bin/grpc_health_probe "${GH_PROXY}https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-${ARCH}" && \
     chmod +x /bin/grpc_health_probe
 
 # 从构建阶段复制已安装的依赖和生成的代码
