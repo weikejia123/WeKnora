@@ -58,7 +58,7 @@ func pairingEndpoint(raw string) (string, error) {
 
 ⇒ **只差 TLS 终端**，其余链路不需要改动。
 
-## 五、三条方案
+## 五、方案（**已采用 A**，2026-09-21 部署完成）
 
 | | 做法 | 代价 / 前提 | 适用 |
 |---|---|---|---|
@@ -68,6 +68,32 @@ func pairingEndpoint(raw string) (string, error) {
 
 > 方案 A 落地后，页面 origin 变为 `https://…`，推导即得 `wss://…`；
 > 若网关用了独立域名/路径，则显式设 `BROWSERSKILL_PUBLIC_URL=wss://<域名>/api/v1/local-browser/extension`。
+
+> **已采用方案 A 并部署完成（2026-09-21）**。实现落在 `my-docker/tls/`
+> （**独立编排**，不改 WeKnora 任何文件），运维细节见 `my-docker/tls/README.md`。
+
+**部署与验证结果（全部实测）**
+
+| 项 | 结果 |
+|---|---|
+| TLS 终端 | 容器 `weknora-tls`（`nginx:1.30.3-alpine`，`network_mode: host`），监听 **443** |
+| 证书 | 自签 CA + 服务器证书，落 `/mnt/data/weknora-tls/`（**不进 git**，私钥 600） |
+| SAN | `IP:10.168.1.111`、`IP:127.0.0.1`、`DNS:localhost`（有效期 10 年） |
+| 证书链 | `openssl s_client -CAfile ca.crt` → **Verify return code: 0 (ok)** |
+| 页面 / API | `https://10.168.1.111/` → **200**；`/api/v1/system/info` → **401**（与 http 时一致） |
+| WebSocket 透传 | 带 `Upgrade` 头 → **403**（缺设备令牌的正常拒绝），`Server: nginx/1.30.3` |
+| 协议推导（**代码级实证**，`go test` 实测） | `https://10.168.1.111` → `wss://10.168.1.111/api/v1/local-browser/extension` ✅<br>`http://10.168.1.111:41200` → 报 `requires WSS`（复现了原报错）✅<br>`http://localhost:41200` → `ws://…`（localhost 例外生效）✅ |
+| 原有 41200 | **保留不变**（双通道，随时可退回纯 http 排查） |
+
+> ⚠️ **访问端（Mac）仍需一步**：把 CA 导入钥匙串并设为「始终信任」——
+> 否则页面能打开、**wss 握手仍会失败**（Chrome 对 WebSocket 的证书错误**不给**"继续访问"的机会）。
+>
+> ```bash
+> # CA 已放在 ~/Downloads/weknora-ca.crt
+> sudo security add-trusted-cert -d -r trustRoot \
+>   -k /Library/Keychains/System.keychain ~/Downloads/weknora-ca.crt
+> ```
+> 导入后**重启一次 Chrome**。CA 的 sha256 指纹应与 `gen-certs.sh` 输出一致。
 
 ## 六、相关配置项
 

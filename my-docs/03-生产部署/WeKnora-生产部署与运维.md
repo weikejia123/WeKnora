@@ -633,6 +633,26 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 只看状态码会把错误页判成"可用"；只看哈希但下载被超时截断，会把可用通道判成"不可用"。
 且**测速必须串行** —— 并行请求会触发反代限流，返回短响应体 + 200，得出错误结论。
 
+### 5.6 111 的 TLS 终端（443，2026-09-21 新增）
+
+**用途**：让浏览器以 `https://` + `wss://` 访问。BrowserSkill 配对**必须** wss
+（`internal/browserskill/manager.go:178-190`；上游 `.env.example:779`「远程部署必须使用
+WSS（包括内网）」）。机制与排查详见 `my-docs/04-功能机制解析/WeKnora-BrowserSkill配对与WSS约束.md`。
+
+| 项 | 值 |
+|---|---|
+| 实现 | `my-docker/tls/`（**独立编排** —— 刻意不并入 `my-docker/docker-compose.yml`，以免破坏其"官方副本可逐行比对"的性质） |
+| 容器 | `weknora-tls`（`nginx:1.30.3-alpine`，`network_mode: host`） |
+| 监听 | **443**，反代 `127.0.0.1:41200`（frontend）；**41200 原样保留** |
+| 证书 | `/mnt/data/weknora-tls/`（自签 CA + 服务器证书；**不进 git**）。`bash my-docker/tls/gen-certs.sh` 幂等生成，`FORCE=1` 重建 |
+| 启停 | `docker compose -f my-docker/tls/docker-compose.yml up -d` / `down` |
+| 文档 | `my-docker/tls/README.md`（Mac 信任证书、验证、排查、回滚） |
+
+> ⚠️ **刻意未开 HSTS**：自签证书场景下，一旦证书被取消信任，HSTS 会把浏览器锁死在 https，
+> 连"退回直连 41200 排查"都做不到。
+> ⚠️ **访问端必须导入 CA**：`sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/Downloads/weknora-ca.crt`
+> —— 否则页面能开但 **wss 握手仍失败**（Chrome 对 WebSocket 的证书错误不给"继续访问"的机会）。
+
 ## 六、待办 / 注意事项
 
 - [x] **✅ 生产已在跑二开代码（2026-09-20 23:57 完成）**：`./deploy/deploy-wkj-dev.sh build` 成功，
