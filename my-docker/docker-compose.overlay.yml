@@ -30,11 +30,11 @@
 #     41280  → nginx → 定制前端
 #     41201  → app（后端 API，仍是 http，未纳入 TLS）
 #     41291  → searxng（自带搜索；**仅绑回环**，且需 --profile searxng 才启动）
-#   两个前端容器本身**只绑宿主回环** 14100 / 14102（仅供诊断），对外一律经 nginx。
+#   两个前端容器本身**只绑宿主回环** 41211 / 41212（仅供诊断），对外一律经 nginx。
 #   ⇒ "没有 http 前端端口"是结构上的事实，不是约定。
 #
 # ★ 与官方 docker-compose.yml 的实际差异（非注释的实体改动，同步上游时按此比对）
-#     1. frontend.ports           41200:80            → 127.0.0.1:14100:80（!override）
+#     1. frontend.ports           41200:80            → 127.0.0.1:41211:80（!override）
 #     2. frontend.build.args      NPM_REGISTRY 默认空 → npmmirror
 #     3. app.build.args           +GOPROXY_ARG / GOSUMDB_ARG
 #     4. app.build.args           +VERSION_ARG / COMMIT_ID_ARG / BUILD_TIME_ARG
@@ -54,9 +54,9 @@ services:
   # ──────────────────────────────────────────────────────────────── 官方前端
   frontend:
     # 让出对外端口：一个端口不能既是 http 又是 https，而 41200 要由 nginx 提供 TLS。
-    # 改为只绑宿主回环（诊断可直接 curl 127.0.0.1:14100，绕过接入层）。
+    # 改为只绑宿主回环（诊断可直接 curl 127.0.0.1:41211，绕过接入层）。
     ports: !override
-      - "127.0.0.1:14100:80"
+      - "127.0.0.1:41211:80"
 
     build:
       args:
@@ -83,7 +83,7 @@ services:
 
     ports:
       # 与官方前端同样只绑回环（见上）
-      - "127.0.0.1:14102:80"
+      - "127.0.0.1:41212:80"
 
     environment:
       # docker-entrypoint.sh 把这些写进 config.js 与内层 nginx 配置
