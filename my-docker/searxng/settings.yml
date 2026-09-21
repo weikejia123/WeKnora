@@ -12,9 +12,9 @@
 #     200：baidu · cn.bing.com · sogou · so.com(360) · quark.sm.cn · mojeek
 #     不可达：google · duckduckgo
 #
-# ★ 最终启用：**bing（权重最高）· 360search · quark**。
-#   搜狗与百度**均不用** —— 全部依据（含各引擎的实测数据）见下方 engines 段注释。
-#   360search 是 2026-09-22 实测新发现的可用引擎：searxng 自带 `360search.py` 模块，
+# ★ 最终启用：**bing（第一优先，weight 2.0）· 360search（补充，1.0）**。
+#   搜狗、百度、quark **均不用** —— 全部依据（含各引擎的实测数据）见下方 engines 段注释。
+#   360search 是 2026-09-22 普查中新发现的可用引擎：searxng 自带 `360search.py` 模块，
 #   但默认 `disabled: true`，需显式启用。
 #
 # ★ 生效链路：searxng-init（oneshot）把本文件拷进命名卷 searxng_config，
@@ -34,7 +34,6 @@ use_default_settings:
     keep_only:
       - bing
       - "360search"
-      - quark
 
 # 显式启用 + 权重。
 # weight 参与 searxng 的结果排序（值越大越靠前；未写时默认 1.0）。
@@ -43,15 +42,15 @@ use_default_settings:
 #   判据是"能否拿到结果块"，不是状态码 —— 多个引擎是 200 但内容为反爬页）：
 #
 #   ✅ 可用
-#     bing (cn.bing.com)  200 · 99KB  · 9 个 b_algo              ⇒ 主引擎
-#     360search (so.com)  200 · 513KB · 8 个结果块（含中文查询）  ⇒ 本次新增
+#     bing (cn.bing.com)  200 · 99KB  · 9 个 b_algo              ⇒ **第一优先（weight 2.0）**
+#     360search (so.com)  200 · 513KB · 8 个结果块（含中文查询）  ⇒ 补充（weight 1.0）
 #     sogou               200 · 996KB · 66 个结果块              ⇒ 可用，但老魏明确不用
 #   ⚠️ 可用但不适合中文
 #     marginalia          200 · 37KB  · 19 个结果块              ⇒ 英文小众索引
 #     头条搜索            200 · 1.4MB · 结构不同（searxng 无模块）
 #   ❌ 不可用（国内网络被拦）
-#     baidu   返回「百度安全验证」页              ⇒ 已按老魏要求移除
-#     quark   200 · 1.3KB 空页                    ⇒ 保留配置，实为反爬
+#     baidu   返回「百度安全验证」页              ⇒ 老魏要求不用
+#     quark   200 · 1.3KB 空页 + searxng 报 CAPTCHA ⇒ **已移除**
 #     mojeek  「Captcha」                          startpage/qwant/yahoo/wiby 不可达
 #     yandex  「Verification」                     presearch/luxxle Cloudflare 403
 #     zapmeta 403 · shenma 空页 · seznam 中文结果极少
@@ -67,9 +66,6 @@ engines:
     # 不补这一行它不会进入普通（general）搜索。
     categories: [general]
   - name: "360search"
-    disabled: false
-    weight: 1.0
-  - name: quark
     disabled: false
     weight: 1.0
 
