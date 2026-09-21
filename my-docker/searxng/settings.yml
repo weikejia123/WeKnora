@@ -12,8 +12,8 @@
 #     200：baidu · cn.bing.com · sogou · so.com(360) · quark.sm.cn · mojeek
 #     不可达：google · duckduckgo
 #
-# ★ 最终启用（老魏 2026-09-22 定）：**bing（权重最高）· quark · baidu（最后）**，
-#   搜狗不用。见下方 use_default_settings.engines.keep_only 与 engines 段。
+# ★ 最终启用（老魏 2026-09-22 定）：**bing（权重最高）· quark**。
+#   搜狗与百度**均不用** —— 百度的实测依据见下方 engines 段注释。
 #
 # ★ 生效链路：searxng-init（oneshot）把本文件拷进命名卷 searxng_config，
 #   searxng 容器随后启动并读取。overlay 里已把 searxng-init 的模板挂载
@@ -26,24 +26,24 @@
 use_default_settings:
   # ★ 从默认引擎集里**只保留**下列引擎（其余全部移除）。
   #   这样不可达引擎不会再来拖慢搜索（每个超时可达 6s）。
-  #   清单与权重由老魏 2026-09-22 定：
-  #     bing 最高优先 · 夸克次之 · 百度最后（广告多）· 搜狗不用。
+  #   清单与权重由老魏 2026-09-22 定：bing 最高优先、夸克次之；
+  #   **搜狗、百度均不用**（百度见下方实测：反爬拦截）。
   engines:
     keep_only:
       - bing
       - quark
-      - baidu
 
 # 显式启用 + 权重。
 # weight 参与 searxng 的结果排序（值越大越靠前；未写时默认 1.0）。
 #
 # ★ 实测（2026-09-22，111 直连各引擎搜索页，curl **-L** 跟随重定向）：
 #     bing (cn.bing.com)  HTTP 200 · 99KB · 9 个 `b_algo` 结果块   ⇒ 可用
-#     sogou               HTTP 200 · 996KB · 66 个结果块           ⇒ 可用（老魏明确不用）
-#     baidu               HTTP 200 · 1.4KB · title「百度安全验证」 ⇒ **反爬拦截，拿不到结果**
-#     quark               HTTP 200 · 1.3KB · 无 title              ⇒ **反爬/空页**
-#   ⇒ 当前网络下**只有 bing 能稳定出结果**；baidu / quark 的配置保留，
-#     但实际抓不到数据（每次搜索会白跑一次请求，不影响 bing 的结果返回）。
+#     sogou               HTTP 200 · 996KB · 66 个结果块           ⇒ 可用，但老魏明确不用
+#     baidu               HTTP 200 · 1.4KB · title「百度安全验证」 ⇒ 反爬拦截 ⇒ 已移除
+#     quark               HTTP 200 · 1.3KB · 无 title              ⇒ 反爬/空页
+#   ⇒ 结论：当前网络下**只有 bing 能稳定出结果**。
+#     quark 配置保留（将来环境变化可能恢复），但每次搜索它会白跑一次请求，
+#     不影响 bing 的结果返回。
 engines:
   - name: bing
     disabled: false
@@ -58,9 +58,6 @@ engines:
   - name: quark
     disabled: false
     weight: 1.0
-  - name: baidu
-    disabled: false
-    weight: 0.5     # 广告多 ⇒ 往后放
 
 general:
   instance_name: "WeKnora SearXNG"
