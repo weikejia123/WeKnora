@@ -101,18 +101,57 @@
 
 ---
 
-## 五、`app` 为什么暂未做
+## 五、`app` 为什么不做外置（已实测，结论：不做）
 
-| 障碍 | 说明 |
+**起因**：老魏提议"111 宿主没 go，就装一个，也没什么麻烦的"。**Go 装好了，但这条路实测走不通。**
+
+### 5.1 宿主编译的产物在容器里跑不起来
+
+装了 Go 1.26.8 + `libsqlite3-dev` 后，宿主编译**成功**（332M 产物），
+但把产物拿进**容器的镜像**里跑 `ldd`，动态链接器直接报缺：
+
+```
+/wk: /lib/x86_64-linux-gnu/libm.so.6: version `GLIBC_2.38' not found (required by /wk)
+/wk: /lib/x86_64-linux-gnu/libstdc++.so.6: version `GLIBCXX_3.4.32' not found (required by /wk)
+/wk: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found (required by /wk)
+```
+
+| | GLIBC | GLIBCXX |
+|---|---|---|
+| 宿主 Ubuntu 24.04 | **2.39** | — |
+| 容器 `debian:12.12-slim` | **2.36** | 3.4.30 |
+| **宿主编出的产物需求** | **2.38** ❌ | **3.4.32** ❌ |
+| 容器内现有二进制需求（基准） | 2.35 ✅ | 3.4.30 ✅ |
+
+**根因**：cgo 二进制与 glibc **强绑定** —— 宿主 glibc 更新，产物就引用更高版本的符号，
+拿到更老的 glibc 上直接 `not found`。
+
+### 5.2 退路逐条排除
+
+| 退路 | 结论 |
 |---|---|
-| **111 宿主无 `go`** | 编译只能在容器内 ⇒ 无法"换编译后的文件" —— 除非先把产物从容器里导出来 |
-| 导出成本 | `docker build --target builder --output type=local` 会导出**整个 builder rootfs**（含 `/go` 缓存，数 GB），不见得比直接 `build` 快 |
-| 编译时间是链路大头 | Go 编译 5~12 分钟，**无论产物放哪都省不掉** |
+| `-static-libstdc++ -static-libgcc` | 只能消掉 `GLIBCXX_*`，**消不掉 `GLIBC_*`**（glibc 本身无法静态链接） |
+| 在 Ubuntu 上装 Debian 12 的 `libc6-dev` | ★ **会破坏宿主系统**，不做 |
+| 降级宿主 glibc | 已是最新主线，不可行 |
+| 容器化编译（`golang:1.26-bookworm`） | ✅ 可行，但**等于回到容器编译** |
 
-⇒ 结论：**待实测**。若将来要做，可行路径是在 111 上跑
-`docker build --target builder --output type=local` 后取产物，再挂载 `/app/WeKnora` + `restart`。
+### 5.3 所以 app 的编译只能在容器里（且不值得再折腾）
 
-**注意**：`app` 若外置，镜像里那份二进制会被挂载遮住 ⇒ **首次必须先填充**（同前端）。
+| 方案 | 编译耗时 | 额外开销 |
+|---|---|---|
+| 现状 `build`（Dockerfile 全流程） | 含 browserskill 等阶段 | 镜像 commit + 容器重建 |
+| `docker build --target builder --output type=local` | 可跳过 browserskill | **导出整个 builder rootfs**（含 `/go` 缓存，数 GB 写盘） |
+
+⇒ 省下的只是"镜像 final 阶段 + 容器重建"（十几秒量级），
+而**编译时间省不掉**（5~12 分钟，无论产物放哪）。
+
+**结论：`app` 维持现状**（走镜像构建），不做外置。
+
+**通用判据**：判断"能不能在 A 上编译、拿到 B 上跑"之前，先比 **`ldd --version`**
+与**产物实际需求的 `GLIBC_*` 符号** —— 不要凭"都是 x86_64"就认为可以。
+
+> **宿主上的 Go 保留**：虽然不能用于产出容器可用的二进制，但可做
+> `go vet` 静态检查、依赖预取（`go mod download`，缓存已 1.8G）。
 
 ---
 
