@@ -109,9 +109,28 @@ MarkItDown 的插件系统**不能**让 WeKnora 免于改代码：
 3. **自写插件技术上可行**（插件可注册 `priority=-1.0` 的转换器，抢占内置 PDF 转换器，实现
    `accepts()` / `convert()`），但要在插件里**重写「PDF 拆页」** —— 而 docreader 已有这个能力；
    且仍需改 `pyproject.toml`（装插件）+ `markitdown_parser.py`（开插件）。
+   **变通**：不想装包的话，MarkItDown 有公开的 `register_converter()`（插件内部调的就是它），
+   可在 `markitdown_parser.py` 里**直接注册**一个自研 converter ⇒ 免装包、免重建 docreader 镜像
+   （docreader 代码是外置的，改 `.py` 秒级生效），但 converter 文件仍要落进 `docreader/parser/`。
 
 > **本质**：插件系统免的是「改 **MarkItDown** 的源码」，不是「改**调用方**的源码」。
 > 调用方把开关写死了，插件就进不来 —— 对 WeKnora 而言它仍是代码改动。
+>
+> **为什么「打开开关」不是瓶颈**：MarkItDown 用
+> `importlib.metadata.entry_points(group="markitdown.plugin")` 发现插件 ⇒
+> **插件必须是「已安装的 Python 发行版」**（带 entry point 元数据），
+> **光把 `.py` 放进目录不会被发现** ⇒ 要装包 ⇒ 改 `pyproject.toml` + **重建 docreader 镜像**。
+> 本项目里这条尤其贵：docreader 的**代码**已外置（`./docreader` → `/app/docreader:ro`，
+> 改 `.py` 走 `push-reader` 秒级生效），但**依赖在镜像的 `/app/.venv`** ⇒
+> **加插件包必须重建镜像**。
+
+**三条路径的最终成本对比**：
+
+| 做法 | 改官方文件 | 是否重建 docreader 镜像 | 自研代码落点 | OCR 实现 |
+|---|---|---|---|---|
+| 开开关 + 官方 `markitdown-ocr` | 2 处 | **要** | 无 | ❌ LLM Vision |
+| 改 markitdown + 自写 converter（用 `register_converter`） | **1 处** | 不用 | `docreader/parser/`（官方目录） | ✅ PP-OCRv6 |
+| OpenAI 适配壳（§8.3） | **0** | 不用 | 110 的 pp-ocr 项目 | ✅ PP-OCRv6 |
 
 ---
 
