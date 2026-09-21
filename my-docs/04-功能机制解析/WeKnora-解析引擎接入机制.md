@@ -93,6 +93,26 @@ WeKnora 侧**四重证据**（可复现）：
 另据实践资料，MarkItDown **不会自动把扫描 PDF 喂给多模态模型**，内置 OCR 只通 Azure ——
 想用别的得自己把 PDF 每页转图，**「自行拆页」是这条路的固有约束**。
 
+**关于「装插件让 markitdown 用 OCR」的追问（已核实）**：
+
+MarkItDown 的插件系统**不能**让 WeKnora 免于改代码：
+
+1. **插件默认禁用，且没有环境变量开关**。官方文档原文：
+   *"Plugins are disabled by default and must be explicitly enabled via the `enable_plugins`
+   flag in the constructor or CLI."*
+   网上流传的 `MARKITDOWN_ENABLE_PLUGINS` 是 **`markitdown-mcp` 那个包自己的**环境变量
+   （它读完后传给构造器），**不是 markitdown 库的**。
+   而 WeKnora 的 `MarkItDown()` 把 `enable_plugins` 写死为默认 False ⇒ **只能改代码**。
+2. **`markitdown-ocr` 插件走的正是 VLM**。它从构造参数取 `llm_client` / `llm_model`，
+   用来初始化 `LLMVisionOCRService`；而 WeKnora 根本没传这两个参数
+   ⇒ **即便装上并启用，它也跑不起来**（要再改代码把 client 传进去）。
+3. **自写插件技术上可行**（插件可注册 `priority=-1.0` 的转换器，抢占内置 PDF 转换器，实现
+   `accepts()` / `convert()`），但要在插件里**重写「PDF 拆页」** —— 而 docreader 已有这个能力；
+   且仍需改 `pyproject.toml`（装插件）+ `markitdown_parser.py`（开插件）。
+
+> **本质**：插件系统免的是「改 **MarkItDown** 的源码」，不是「改**调用方**的源码」。
+> 调用方把开关写死了，插件就进不来 —— 对 WeKnora 而言它仍是代码改动。
+
 ---
 
 ## 四、引擎配置怎么存、怎么传
