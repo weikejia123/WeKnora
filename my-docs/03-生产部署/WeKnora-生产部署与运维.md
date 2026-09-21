@@ -48,23 +48,23 @@
 
 ### 1.1.1 编排文件用哪一份：`my-docker/`
 
-仓库里**有两份 compose**，分工明确：
+编排是**一个容器组**，由两份文件**叠加**而成：
 
-| 文件 | 归属 | 谁在用 |
-|---|---|---|
-| `docker-compose.yml`（仓库根） | **官方原版，一字不改** | 没人直接用；作为同步上游的基准 |
-| `my-docker/docker-compose.yml` | **站点定制版**（官方副本 + 3 处修改） | **部署一律用它** |
+| 文件 | 角色 |
+|---|---|
+| `docker-compose.yml`（仓库根） | **基底** —— 官方原版，**一字不动**；上游更新时自动继承 |
+| `my-docker/docker-compose.overlay.yml` | **叠加层** —— 我们的全部定制（新增 `frontend-wkj` / `nginx` 两个服务 + 覆盖若干字段） |
 
-这样做的好处：**同步上游时零冲突** —— 上游怎么改官方那份都不影响我们，
-只需按 `my-docker/` 头部的差异清单逐条核对是否有需要跟进的变化。
+合并后属于**同一个 compose 项目（`weknora`）、同一个容器组**，一次 `up -d` 起停全部。
+好处：上游怎么改官方那份都不影响我们，我们的定制也集中在一处、不会散落。
 
-差异清单是**单一事实来源**，写在 `my-docker/docker-compose.yml` 的文件头注释里
+差异清单是**单一事实来源**，写在 `my-docker/docker-compose.overlay.yml` 的文件头注释里
 （紧贴被改动的代码），`my-docker/README.md` 不重复。
 
-> **调用时必须带 `--project-directory`**：Compose 的相对路径（`build.context` /
-> bind mount / `env_file: .env`）默认按 **compose 文件所在目录** 解析，文件挪进 `my-docker/`
-> 后会全部错位 —— 轻则报 `my-docker/.env 不存在`，重则项目名退化成 `my-docker`
-> 而指向一套**新建的空数据卷**（表现为「数据全没了」）。
+> **两个 `-f` 必须都给、顺序不能反**：Compose 的相对路径（`build.context` /
+> bind mount / `env_file: .env`）以**第一个 `-f` 的目录**为基准；先给仓库根的官方文件，
+> 基准才是仓库根。顺序反了或漏了 `--project-directory`，轻则报 `.env 不存在`，
+> 重则项目名退化成别的名字而指向一套**新建的空数据卷**（表现为「数据全没了」）。
 > 部署脚本已把这一串参数封装为 `$DC`，并额外加了项目名硬校验兜底。
 
 ### 1.2 服务器与路径
@@ -91,11 +91,18 @@
 
 访问地址：
 
-- 网页：`http://10.168.1.111:41200`
-- API：`http://10.168.1.111:41201/api/v1`
-- 健康检查：`http://10.168.1.111:41201/health`
+| 用途 | 地址 |
+|---|---|
+| 官方前端 | `https://10.168.1.111:41200/`（另有免带端口的 `https://10.168.1.111/`） |
+| **定制前端** | **`https://10.168.1.111:41280/`** |
+| 后端 API | `http://10.168.1.111:41201/api/v1` |
+| 健康检查 | `http://10.168.1.111:41201/health` |
 
-> **`41200-41299` 为本项目预留端口段**，后续如需启用可选组件（MinIO / Neo4j / Langfuse 等）按顺序占用 `41202`、`41203`…，不要跳到区间外。
+> **两个前端都是 https**（自签证书，访问端需先导入 CA，见 §5.6）。
+> 前端容器本身只绑宿主回环 `14100` / `14102`（仅供诊断），对外一律经接入层。
+
+> **`41200-41299` 为本项目预留端口段**，后续如需启用可选组件（MinIO / Neo4j / Langfuse 等）
+> 按顺序占用 `41281`、`41282`…（`41280` 已给定制前端的 https 入口），不要跳到区间外。
 
 ### 1.4 容器清单
 
@@ -323,7 +330,7 @@ ssh nanning-111 "docker exec WeKnora-docreader sh -c \
 **没有 wire `GOPROXY_ARG`**（`Dockerfile.app:23` 声明了该 ARG 却没传）；`NPM_REGISTRY` 与 `APT_MIRROR` 同理
 （都声明了、默认空 ⇒ 回落国外源）。仓库**无 `vendor/`**，所以 Go 代理是硬需求。
 
-**解法**：不改官方 compose，改为在 `my-docker/docker-compose.yml` 的三处 build.args 里补默认值
+**解法**：不改官方 compose，改为在 `my-docker/docker-compose.overlay.yml` 的 build.args 里补默认值
 （详见该文件头部「与官方的差异清单」）。部署脚本已统一使用该文件，**无需再手工配 `.env`**。
 
 ##### 实测验证（2026-09-20，111 上 compose v5.5.1）
@@ -633,23 +640,24 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 只看状态码会把错误页判成"可用"；只看哈希但下载被超时截断，会把可用通道判成"不可用"。
 且**测速必须串行** —— 并行请求会触发反代限流，返回短响应体 + 200，得出错误结论。
 
-### 5.6 111 的 TLS 终端（443，2026-09-21 新增）
+### 5.6 111 的接入层（nginx，2026-09-21 新增并改版）
 
-**用途**：让浏览器以 `https://` + `wss://` 访问。BrowserSkill 配对**必须** wss
+**用途**：让浏览器以 `https://` + `wss://` 访问**两个前端**。BrowserSkill 配对**必须** wss
 （`internal/browserskill/manager.go:178-190`；上游 `.env.example:779`「远程部署必须使用
 WSS（包括内网）」）。机制与排查详见 `my-docs/04-功能机制解析/WeKnora-BrowserSkill配对与WSS约束.md`。
 
 | 项 | 值 |
 |---|---|
-| 实现 | `my-docker/tls/`（**独立编排** —— 刻意不并入 `my-docker/docker-compose.yml`，以免破坏其"官方副本可逐行比对"的性质） |
-| 容器 | `weknora-tls`（`nginx:1.30.3-alpine`，`network_mode: host`） |
-| 监听 | **443**，反代 `127.0.0.1:41200`（frontend）；**41200 原样保留** |
-| 证书 | `/mnt/data/weknora-tls/`（自签 CA + 服务器证书；**不进 git**）。`bash my-docker/tls/gen-certs.sh` 幂等生成，`FORCE=1` 重建 |
-| 启停 | `docker compose -f my-docker/tls/docker-compose.yml up -d` / `down` |
-| 文档 | `my-docker/tls/README.md`（Mac 信任证书、验证、排查、回滚） |
+| 实现 | 容器组内的 `nginx` 服务（定义在 `my-docker/docker-compose.overlay.yml`；配置资产在 `my-docker/nginx/`） |
+| 容器 | `weknora-nginx`（`nginx:1.30.3-alpine`，加入 `weknora_WeKnora-network`） |
+| 对外 | `443` / `41200` → 官方前端；`41280` → 定制前端（**同一张证书**，SAN 含 IP 与端口无关） |
+| 对内 | 反代容器组内的 `frontend:80` / `frontend-wkj:80`（Docker DNS 解析 service 名） |
+| 证书 | `/mnt/data/weknora-tls/`（自签 CA + 服务器证书；**不进 git**）。`bash my-docker/nginx/gen-certs.sh` 幂等生成。★ **目录名刻意保留历史名** —— 改名会让人以为要重新生成，而那会作废访问端已导入的 CA 信任 |
+| 前端容器 | **只绑宿主回环** `14100` / `14102`（仅供诊断直连）⇒ "没有 http 前端端口"是结构上的事实 |
+| 文档 | `my-docker/nginx/README.md`（Mac 信任证书、验证、排查、回滚、迁移记录） |
 
 > ⚠️ **刻意未开 HSTS**：自签证书场景下，一旦证书被取消信任，HSTS 会把浏览器锁死在 https，
-> 连"退回直连 41200 排查"都做不到。
+> 连"退回排查"都做不到。
 > ⚠️ **访问端必须导入 CA**：`sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/Downloads/weknora-ca.crt`
 > —— 否则页面能开但 **wss 握手仍失败**（Chrome 对 WebSocket 的证书错误不给"继续访问"的机会）。
 

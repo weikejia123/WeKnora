@@ -69,14 +69,14 @@ func pairingEndpoint(raw string) (string, error) {
 > 方案 A 落地后，页面 origin 变为 `https://…`，推导即得 `wss://…`；
 > 若网关用了独立域名/路径，则显式设 `BROWSERSKILL_PUBLIC_URL=wss://<域名>/api/v1/local-browser/extension`。
 
-> **已采用方案 A 并部署完成（2026-09-21）**。实现落在 `my-docker/tls/`
-> （**独立编排**，不改 WeKnora 任何文件），运维细节见 `my-docker/tls/README.md`。
+> **已采用方案 A 并部署完成（2026-09-21；同日改版为容器组内的 nginx 服务）**。实现落在容器组内的 `nginx` 服务（定义在 `my-docker/docker-compose.overlay.yml`，配置资产在 `my-docker/nginx/`）
+> （**不改 WeKnora 任何文件**），运维细节见 `my-docker/nginx/README.md`。
 
 **部署与验证结果（全部实测）**
 
 | 项 | 结果 |
 |---|---|
-| TLS 终端 | 容器 `weknora-tls`（`nginx:1.30.3-alpine`，`network_mode: host`），监听 **443** |
+| 接入层 | 容器 `weknora-nginx`（`nginx:1.30.3-alpine`）：对外 `443`/`41200` → 官方前端、`41280` → 定制前端 |
 | 证书 | 自签 CA + 服务器证书，落 `/mnt/data/weknora-tls/`（**不进 git**，私钥 600） |
 | SAN | `IP:10.168.1.111`、`IP:127.0.0.1`、`DNS:localhost`（有效期 10 年） |
 | 证书链 | `openssl s_client -CAfile ca.crt` → **Verify return code: 0 (ok)** |

@@ -272,7 +272,7 @@ TAG=$(grep -m1 '^WEKNORA_VERSION=' .env 2>/dev/null | cut -d= -f2-); TAG=${TAG:-
 #   登记过的 ID，说明它还是我们构建的产物 → 拒绝 pull。
 local_built=0
 _marker="$DIR/.git/wkj-last-build"
-for _img in wechatopenai/weknora-app wechatopenai/weknora-ui; do
+for _img in wechatopenai/weknora-app wechatopenai/weknora-ui wechatopenai/weknora-ui-wkj; do
   _cur=$(docker image inspect "$_img:$TAG" --format '{{.Id}}' 2>/dev/null || echo missing)
   _rec=$(awk -v k="$_img:$TAG" '$1==k {print $2; exit}' "$_marker" 2>/dev/null || true)
   if [ -n "$_rec" ] && [ "$_cur" = "$_rec" ]; then
@@ -427,7 +427,7 @@ _build_with_version() {
   # （放在 .git 内 ⇒ 不污染工作区；判据修正原因见 compose_up 里的说明）
   _marker="$DIR/.git/wkj-last-build"
   : > "$_marker"
-  for _img in wechatopenai/weknora-app wechatopenai/weknora-ui wechatopenai/weknora-docreader; do
+  for _img in wechatopenai/weknora-app wechatopenai/weknora-ui wechatopenai/weknora-docreader wechatopenai/weknora-ui-wkj; do
     _id=$(docker image inspect "$_img:$TAG" --format '{{.Id}}' 2>/dev/null || true)
     [ -n "$_id" ] && printf '%s:%s %s\n' "$_img" "$TAG" "$_id" >> "$_marker"
   done

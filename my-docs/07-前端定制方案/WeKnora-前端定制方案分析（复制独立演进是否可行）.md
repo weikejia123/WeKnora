@@ -7,6 +7,16 @@
 
 ---
 
+> **实施更新（2026-09-21，本文写成后已落地）**：实际采用的形态与本节的初步设想不同 ——
+> 不是"另起一份独立编排"，而是**把定制前端并入同一个容器组**（老魏的要求：
+> "部署时应是一整个容器组"）。落地为：
+> - 基底 `docker-compose.yml`（官方，一字不动） + 叠加层 `my-docker/docker-compose.overlay.yml`
+> - 新增两个服务：`frontend-wkj`（定制前端）、`nginx`（两个前端的 https/wss 接入层）
+> - 两个前端容器都**只绑宿主回环** `14100` / `14102`；对外入口是
+>   `https://10.168.1.111:41200/`（官方）与 **`https://10.168.1.111:41280/`**（定制）
+>
+> 详见 `my-docker/README.md`。下文保留当时的分析（方案对比与风险判断仍然有效）。
+
 ## 一、结论
 
 **技术层面可行**，且只需要一个独立编排文件就能做到（不需要动官方前端一个文件）。
@@ -37,7 +47,7 @@
 |---|---|---|---|
 | 1 | **镜像 tag** | `wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}` | **换成独立 tag**（如 `weknora-ui-wkj:latest`）★ 否则 `pull`/`build` 会与官方镜像互相覆盖——就是之前修过的"二开镜像被静默覆盖"那类问题 |
 | 2 | **container_name** | `WeKnora-frontend`（compose 里写死） | 改名（如 `WeKnora-frontend-wkj`） |
-| 3 | **宿主端口** | `${FRONTEND_PORT:-80}`（当前 41200） | 独立端口（如 41202） |
+| 3 | **宿主端口** | `${FRONTEND_PORT:-80}`（当前 41200） | 只绑回环 `127.0.0.1:14102`（对外由接入层提供 `https://…:41280`） |
 | 4 | **build.context** | `./frontend` | 指向副本目录（如 `./my-frontend`） |
 | 5 | **nginx 模板** | `docker-entrypoint.sh` 用 envsubst 注入 `APP_HOST/APP_PORT/APP_SCHEME`、`MAX_FILE_SIZE_MB` 等 | 副本自带一份；副本仍反代到同一个 `app:8080` |
 
