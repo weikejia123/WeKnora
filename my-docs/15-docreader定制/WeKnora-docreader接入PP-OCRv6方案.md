@@ -82,6 +82,64 @@ my-docreader/ppocr_converter.py   →    /app/docreader_ext/ppocr_converter.py
 
 ## 四、converter 设计要点
 
+### 4.0 参考实现：已扒 `markitdown-ocr` 源码（一手证据）
+
+**没有现成的 PP-OCRv6 插件。** `markitdown-ocr` 是 MarkItDown 仓库里唯一的 OCR 插件，
+其文档原文点明：*"doesn't bundle a traditional OCR engine like **Tesseract or PaddleOCR**"* ——
+它只调 OpenAI 兼容的 vision API。
+
+**但它的结构可以直接借鉴**（实测 `pip download markitdown-ocr` 解包 0.1.0 读出）：
+
+**① 注册方式**（决定 `markitdown_parser.py` 怎么写）
+
+```python
+# 来自 markitdown_ocr/_plugin.py
+markitdown.register_converter(
+    PdfConverterWithOCR(ocr_service=ocr_service), priority=-1.0
+)
+```
+
+⇒ 签名是 **`register_converter(converter_instance, priority=float)`**，
+`priority=-1.0` 用于**抢占**内置转换器（内置为 `0.0`）。
+⚠️ 这是**新版 API**；WeKnora 锁的是 **0.1.3** ⇒ **务必按 §五.② 先实测签名**。
+
+**② OCR 后端是解耦的 —— 只需实现一个方法**
+
+```python
+# 来自 markitdown_ocr/_ocr_service.py
+class LLMVisionOCRService:
+    def extract_text(
+        self, image_stream: BinaryIO,
+        prompt: str | None = None,
+        stream_info: StreamInfo | None = None,
+        **kwargs: Any,
+    ) -> OCRResult:          # OCRResult(text, confidence, backend_used, error)
+```
+
+⇒ **这就是要替换的接缝**：写出 `PPOCRV6Service.extract_text()`（内部打 110 的 `/api/ocr`），
+**其余骨架不动**。
+
+**③ PDF 骨架（422 行，两段式）**
+
+| 阶段 | 行为 |
+|---|---|
+| 嵌入图 | 混排页里只裁出图送 OCR，结果按**原始 Y 坐标**回插，保持阅读顺序 |
+| 整页兜底 | 文本抽取**完全为空**时（纯扫描件），整页渲染后**逐页**送 OCR |
+
+⚠️ 它的整页渲染依赖 **`PyMuPDF`（`import fitz`）**，而 docreader **没有这个包**
+（用的是 `pypdfium2`）⇒ 若照抄骨架，**渲染那段要换成 `pypdfium2`**，
+否则就得加依赖 + 重建镜像。
+
+**④ 三条从它身上学到的教训**
+
+| 它的做法 | 我们不要照做 |
+|---|---|
+| 未传 `llm_client` 时**静默返回空**（原文 *"OCR is silently skipped"*） | **显式失败或回落** —— 静默空结果是批量任务里最难查的坑 |
+| 渲染用 **300 dpi** | 可参考（对字准友好），但要守住 110 的长边 ≤4096px 限制 |
+| README 里的 CLI 参数 `--llm-client` **是文档 bug，实际不存在** | 只走 Python API（WeKnora 也正好是 Python API 调用） |
+
+### 4.1 我们的 converter 骨架
+
 ```python
 class PPOCRConverter(DocumentConverter):
     def accepts(self, file_stream, stream_info, **kwargs) -> bool:
