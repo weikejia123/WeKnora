@@ -8,6 +8,8 @@
 1. **引擎列表由后端注册表产出**，前端只渲染 —— 想让「列表里多一个引擎」，改的是**后端**，不是前端某个配置项。
 2. 引擎分两类：**Go 侧本地引擎**（能配 endpoint）与 **docreader 侧 Python 引擎**（**没有** endpoint 概念）。判据见 §三。
 3. 接外部服务只有两条路：**对齐 WeKnora 已支持的协议**（零代码），或 **新增一个 Go 侧引擎**（要改官方文件）。
+4. ★ **图片 OCR 不在解析引擎体系内** —— 它走知识库的「视觉模型」（协议仅 OpenAI / Ollama），
+   docreader 侧**没有**任何 OCR 配置项。想让外部 OCR 服务干活，只能从解析引擎进。见 §六。
 
 ---
 
@@ -120,12 +122,41 @@ ReaderDeps.Overrides  →  引擎构造函数读取（如 overrides["paddleocr_v
 
 ---
 
-## 六、接入外部服务：两条路
+## 六、★ 图片 OCR 走的是另一条通道（易误判）
 
-### 路线 A · 对齐已有协议（推荐）
+**结论：图片 OCR —— 包括扫描件 PDF 的页图 —— 不在解析引擎体系内，也没有「OCR 引擎」可配。**
+
+```mermaid
+flowchart TD
+    D["docreader：只渲染，不做 OCR<br/>扫描页 → JPEG，metadata 标 image_source_type=scanned_pdf"] --> G
+    G["Go：image_multimodal.go"] --> O["EnableOCR → buildVLMOCRPrompt() → vlmModel.Predict()<br/>【图片 OCR】"]
+    G --> C["buildVLMCaptionPrompt() → vlmModel.Predict()<br/>【插图 caption】"]
+    O --> M["模型来自 modelService.GetVLMModel(ctx, vlmCfg.ModelID)<br/>vlmCfg 来自知识库的 VLMConfig"]
+    C --> M
+```
+
+**两条硬约束**决定了「把 PP-OCRv6 配成图片 OCR」为什么做不到：
+
+1. **docreader 不做 OCR**。镜像构建已移除 OCR / PaddleOCR 依赖（`docker/Dockerfile.docreader`），
+   `image_parser.py` 注释明确 **"不做任何 OCR"**。它只把扫描页渲染成图片，OCR 交给 Go 侧。
+   ⇒ **docreader 没有任何 OCR 配置项可填**。
+2. **视觉模型通道只认两种协议**。`internal/models/vlm` 的 `Config.InterfaceType` 仅
+   `"openai"`（默认）或 `"ollama"`，且模型只能从 `models` 表里选（`VLMConfig.ModelID`）。
+   110 的 `POST /api/ocr`（multipart、自有参数）**不属于任何一种** ⇒ 无论怎么填都接不上。
+
+⇒ **想让 PP-OCRv6 处理扫描件，唯一的入口是解析引擎**（`paddleocr_vl` → `/layout-parsing`），见 §八。
+走通之后，扫描件的 OCR **不再依赖视觉模型**；
+但**插图 caption 仍走视觉模型**（上图第二个分支），建议保留该配置。
+
+---
+
+## 七、接入外部服务：两条路
+
+### 路线 A · 对齐已有协议（推荐，零代码）
 
 对方服务若能提供 `/layout-parsing` 形态的文档解析接口，**零代码**：
 设置 → 解析引擎 → 「PaddleOCR-VL（自建）」→ 填 endpoint → 测试连接 → 保存。
+再在知识库解析设置里，把 `pdf`（或图片类型）的引擎指定为该引擎。
 
 **适配判据**（三条全中才算对齐）：
 
@@ -135,18 +166,18 @@ ReaderDeps.Overrides  →  引擎构造函数读取（如 overrides["paddleocr_v
 
 ### 路线 B · 新增一个 Go 侧引擎
 
-对方协议不对齐、且无法改造时走这条。改动面见 §四 + 引擎实现 + 前端抽屉字段，
+对方协议不对齐、且无法在对方侧改造时走这条。改动面见 §四 + 引擎实现 + 前端抽屉字段，
 **涉及多处官方文件修改** ⇒ 与仓库「官方文件保持原样」的约束冲突，需明确决策。
 
 ---
 
-## 七、案例：接 110 的 PP-OCRv6 GPU
+## 八、案例：接 110 的 PP-OCRv6 GPU
 
 110 上现有一个自建服务 `pp-ocr-v6-gpu-api`（`10.168.1.110:36741`），
 接口是 `GET /api/health` + `POST /api/ocr`（**multipart/form-data**，`image=@file`），
-响应 `results[].text`。**它属于纯 OCR，不是文档解析产线。**
+响应 `results[].text`。**它是纯 OCR，不是文档解析产线。**
 
-### 7.1 为什么直接接不上
+### 8.1 为什么它接不上
 
 | 维度 | 110:36741 | WeKnora `paddleocr_vl` 契约 |
 |---|---|---|
@@ -157,32 +188,78 @@ ReaderDeps.Overrides  →  引擎构造函数读取（如 overrides["paddleocr_v
 | 输出语义 | 纯文本行 | 版面 / 表格 → markdown |
 | 吞吐 | 串行 ≈1 张/s、429 限流、pipeline 缓存 6 组 | 单次整份 PDF、超时 1000s |
 
-### 7.2 ★ 推荐做法：在 110 再起一个「文档解析产线」
+⇒ 它既不是解析引擎协议，也不是视觉模型协议（§六）⇒ **纯配置接不上**。
 
-**关键事实**：`paddleocr_vl` 引擎读的字段与 **PP-StructureV3** 的响应字段**完全一致**：
+### 8.2 ★ 不改 WeKnora 源码的三条路
 
-- WeKnora：`layoutParsingResults[].markdown.{text, images}`
-- 官方文档：`markdown` 对象含 `text`（Markdown text）、`images`、`isStart`、`isEnd`
+前置认知：**WeKnora 侧要的只是一个 `/layout-parsing` 形态的端点**。
+只要 110 侧能提供它，**WeKnora 一行代码不用改**。
 
-**且 PP-StructureV3 的「通用 OCR 子产线」官方已集成 PP-OCRv6**
-（原文：*"General OCR Sub-Pipeline … PP-OCRv6_medium, PP-OCRv5_server"*）。
+| 方案 | 110 侧要做的事 | 能处理纯图片 PDF | 输出质量 |
+|---|---|---|---|
+| **A（推荐）** | 起 PP-StructureV3 产线：`paddlex --serve --pipeline PP-StructureV3 --device gpu:0 --port 36742` | ✅ 原生吃 PDF（`fileType=0`） | ★★★ 版面 / 表格 / 阅读顺序 |
+| **B** | 给 36741 加一个 `/layout-parsing` 兼容端点（约 40 行；PDF 还要自己拆页渲染） | ⚠️ 需自行拆页 | ★ 纯文本行 |
+| **C** | 独立写一个协议转换小服务（同 B，只是换个进程） | ⚠️ 需自行拆页 | ★ 纯文本行 |
 
-⇒ 在 110 上 `paddlex --serve --pipeline PP-StructureV3`（GPU，可指定 PP-OCRv6 权重），
-**WeKnora 侧零代码**：端点填新端口即可。
+**方案 A 为什么是最优**：
 
-相较「直连 36741」多出：**版面 / 表格 / 公式 / 阅读顺序**，且能**一次吃整份 PDF**。
+- **响应字段天然对齐** —— WeKnora 读 `layoutParsingResults[].markdown.{text,images}`，
+  PP-StructureV3 官方文档的响应结构**就是这个**（`markdown.text` / `markdown.images` / `isStart` / `isEnd`）；
+- **PP-OCRv6 已经在里面** —— PP-StructureV3 的「通用 OCR 子产线」官方已集成 PP-OCRv6
+  （文档原文：*"General OCR Sub-Pipeline … PP-OCRv6_medium, PP-OCRv5_server"*）
+  ⇒ **既用上 PP-OCRv6，又拿到版面结构**；
+- **原生支持 PDF**，不需要自己拆页；
+- 110 与 WeKnora 的职责干净分离：**OCR 能力留在 110，WeKnora 只当消费方**。
 
-**两点须先实测**（未验证，勿当结论）：
+### 8.3 本地实测：客户端侧风险已排除
 
-1. WeKnora 发的 payload 混入了 PaddleOCR-VL 专有字段（`promptLabel`、`temperature`、
-   `repetitionPenalty`、`minPixels`、`maxPixels`、`topP`），PP-StructureV3 的请求校验是否容忍多余字段；
-2. 显存 —— PP-StructureV3 比纯 OCR 重（需多加载版面检测 / 表格 / 公式模型）。
+用 mock 服务模拟 PP-StructureV3 的 `/layout-parsing`（响应结构照抄官方文档），
+跑 WeKnora 真实的 `PaddleOCRVLReader`：
 
-### 7.3 若坚持直连 36741
+**① WeKnora 实际发出的请求**
 
-需走路线 B，**并且要接受三个能力缩水**：
+```
+POST /layout-parsing          Content-Type: application/json
+共 21 个字段：
+  file / fileType(=0 即 PDF) / visualize(=false)
+  + 18 个参数：promptLabel, temperature, topP, repetitionPenalty,
+    minPixels, maxPixels, useLayoutDetection, useDocOrientationClassify,
+    useDocUnwarping, useSealRecognition, useChartRecognition,
+    useOcrForImageBlock, markdownIgnoreLabels, mergeTables, relevelTitles,
+    restructurePages, layoutShapeMode, layoutNms
+```
 
-- **不能处理 PDF** —— 只能接图片（PDF 得另配「渲染成页图再逐页送 OCR」的链路）；
+**② 对 PP-StructureV3 风格响应的解析：成功**
+
+2 页 markdown 被正确合并，**表格原样保留**：
+
+```
+# 扫描件首页
+
+这是第一页的正文。
+
+| 项目 | 金额 |
+| --- | --- |
+| 合计 | 100 |
+
+## 第二页
+
+续页正文内容。
+```
+
+⇒ **客户端侧无风险**：只要服务端返回 `result.layoutParsingResults[].markdown.text`，
+WeKnora 就能正确落成 markdown。
+
+**仍待对真实服务实测的一点**：请求里那 18 个参数多为 PaddleOCR-VL 专有
+（`promptLabel` / `minPixels` / `restructurePages` …），PP-StructureV3 的 Pydantic 请求模型
+是否容忍多余字段 —— **默认行为是忽略，但未对真实服务验证**。
+其中 `file` / `fileType` / `visualize` 是 PP-StructureV3 官方原生入参，这部分确定没问题。
+
+### 8.4 若坚持直连 36741
+
+需走路线 B（改官方文件），**并且要接受三个能力缩水**：
+
+- **不能处理 PDF** —— 只接图片（PDF 得另配「渲染成页图再逐页送 OCR」的链路）；
 - **丢失版面结构** —— 纯文本行流，下游分块质量下降；
 - **吞吐冲突** —— 服务端串行 ≈1 张/s + 429 限流，而 WeKnora 的 converter **没有退避重试**。
 
@@ -191,7 +268,7 @@ ReaderDeps.Overrides  →  引擎构造函数读取（如 overrides["paddleocr_v
 
 ---
 
-## 八、坑位
+## 九、坑位
 
 1. **「测试连接」会假阳性**。`PingPaddleOCRVL` 只发 `GET {endpoint}/layout-parsing`，
    判定标准是 **`statusCode < 500`** ⇒ 把端点填成一个「没有该路径」的服务（返回 404）时，
@@ -200,3 +277,5 @@ ReaderDeps.Overrides  →  引擎构造函数读取（如 overrides["paddleocr_v
 3. **`markitdown` 之类不在此列** —— 见 §三，它们没有 endpoint。
 4. **改了 Go 侧注册表，前端两处列表会自动出现**，但配置抽屉的字段要手工加；
    若漏改 `parser_url_security.go`，保存时不报错、解析时静默失败。
+5. **图片 OCR 与解析引擎是两条通道** —— 配置视觉模型不会影响扫描件的解析引擎行为，
+   反之亦然。排查「扫描件没出文字」时先确认走的是哪条路，见 §六。
