@@ -45,7 +45,7 @@
 | `weknora_data-files` 卷 | 同上 | ❌ **不能** —— 上传的原始文件 |
 | **`.env`** | `/mnt/data/weknora/.env`（**gitignore 内**） | ❌ **不能** —— ★ 见下 |
 | `weknora_docreader-tmp` 卷 | 同上 | ✅ 能 —— 临时解析产物 |
-| `searxng_config` 卷 | 同上 | ✅ 能 —— 由 `docker/searxng/settings.yml` 模板重建 |
+| `searxng_config` 卷 | 同上 | ✅ 能 —— 由 **`my-docker/searxng/settings.yml`**（站点定制，经 `searxng-init` 投递）重建 |
 | 代码仓库 | `/mnt/data/weknora` | ✅ 能 —— git |
 | `config/config.yaml` | 仓库内（受版本控制） | ✅ 能 —— git |
 | TLS 证书 | `/mnt/data/weknora-tls` | ⚠️ 能重签，但客户端要重新导入 CA |
@@ -326,7 +326,7 @@ ssh nanning-111 '/mnt/data/weknora/my-scripts/backup-weknora.sh --status'
 | 数据库体积 | **32 MB** |
 | 文件卷 `data-files` 体积 | **568 K** |
 | 磁盘剩余 | **14.6 T** ⇒ 全量 ×10 份毫无压力（这正是"不需要增量"的实证） |
-| 当前迁移版本 | `106`，`dirty=f`（干净） |
+| 迁移版本（实测当时） | `106`，`dirty=f`（干净）—— **2026-09-22 已到 `108`**（本地 migrations 最新号也是 108 ⇒ 重跑 app 不会执行迁移） |
 | `pg_dump` / `pg_restore` 在 `paradedb/paradedb:v0.22.6-pg17` 中可用 | ✅ dump 2.8M，`pg_restore -l` 可解析 |
 | **特殊索引是否在 dump 中** | ✅ 含 `USING bm25` ×1、`USING hnsw` ×3、`CREATE EXTENSION pg_search WITH SCHEMA paradedb` |
 

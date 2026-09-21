@@ -83,11 +83,17 @@
 
 ### 1.3 端口规划
 
-| 服务 | 容器内端口 | **宿主机（对外）** |
-|---|---|---|
-| frontend（网页） | 80 | **41200** |
-| app（后端 API） | 8080 | **41201** |
-| postgres / redis / docreader | — | **不映射**（仅容器网络内互通） |
+**对外端口全部由接入层 `nginx` 提供**（两个前端容器本身只绑宿主回环）：
+
+| 服务 | 容器内端口 | **宿主机** | 说明 |
+|---|---|---|---|
+| `nginx` → 官方前端 | 443 / 41200 | **443 / 41200** | https / wss |
+| `nginx` → 定制前端 | 41280 | **41280** | https / wss |
+| `app`（后端 API） | 8080 | **41201** | http（未纳入 TLS） |
+| `frontend` | 80 | *仅回环 `41211`* | 诊断直连（绕过接入层） |
+| `frontend-wkj` | 80 | *仅回环 `41212`* | 同上 |
+| `searxng`（自带搜索） | 8080 | *仅回环 `41291`* | **已启用**；容器间访问走 `http://searxng:8080` |
+| postgres / redis / docreader | — | **不映射**（仅容器网络内互通） | |
 
 访问地址：
 
@@ -101,20 +107,29 @@
 > **两个前端都是 https**（自签证书，访问端需先导入 CA，见 §5.6）。
 > 前端容器本身只绑宿主回环 `41211` / `41212`（仅供诊断），对外一律经接入层。
 
-> **`41200-41299` 为本项目预留端口段**，后续如需启用可选组件（MinIO / Neo4j / Langfuse 等）
-> 按顺序占用 `41281`、`41282`…（`41280` 已给定制前端的 https 入口），不要跳到区间外。
+> **`41200-41299` 为本项目预留端口段**：不论对外还是仅回环，服务端口都从这个号段取 ——
+> **号段与「是否对外」是两件事**，是否对外另由**绑定地址**决定（能只绑回环的就不对外）。
+>
+> ⚠️ **不要"按顺序接着排"**：`41291`（searxng）是老魏**指定**的，并非顺延而来
+> （我曾推 `41202` 被否）。新增端口前先看当前实际占用，或直接问。
 
 ### 1.4 容器清单
 
-| 容器名 | 作用 |
-|---|---|
-| `WeKnora-frontend` | 网页界面（Nginx） |
-| `WeKnora-app` | 后端主程序 |
-| `WeKnora-docreader` | 文档解析服务 |
-| `WeKnora-postgres` | 数据库（ParadeDB） |
-| `WeKnora-redis` | 队列与缓存 |
+| 容器名 | 来源 | 作用 |
+|---|---|---|
+| `WeKnora-postgres` | 官方基底 | 数据库（ParadeDB） |
+| `WeKnora-redis` | 官方基底 | 队列与缓存 |
+| `WeKnora-docreader` | 官方基底 | 文档解析服务 |
+| `WeKnora-app` | 官方基底 | 后端主程序 |
+| `WeKnora-frontend` | 官方基底 | 官方前端（Nginx），作**功能对照**用 |
+| **`WeKnora-frontend-wkj`** | **本层新增** | **定制前端**（源码 `my-frontend/`），日常主用 |
+| **`weknora-nginx`** | **本层新增** | **接入层**：两个前端的 HTTPS/WSS 统一入口 |
+| **`WeKnora-searxng`** | 官方基底（profile 门控） | 自带网络搜索 |
+| **`WeKnora-searxng-init`** | 官方基底（profile 门控） | oneshot：把 settings.yml 模板拷进命名卷 |
 
-> 容器名沿用上游 `WeKnora-` 前缀（compose 里写死）。Docker **项目名**为 `weknora`（体现在网络与数据卷名上）。
+> 容器名沿用上游 `WeKnora-` 前缀（compose 里写死；接入层与 searxng 用小写）。
+> Docker **项目名**为 `weknora`（体现在网络与数据卷名上）。
+> 两个前端**都保留**：日常主用定制前端，功能不对时访官方前端做对照。
 
 ---
 
@@ -122,15 +137,24 @@
 
 ### 2.1 命令清单
 
+> ★ **三层应用代码均已外置（2026-09-22）** ⇒ 日常改代码**不必重建镜像**。
+> 改动面 → 命令的完整对照与原理见
+> `my-docs/12-应用代码外置/WeKnora-应用代码外置方案.md`（该话题的**唯一事实来源**）。
+
 | 命令 | 作用 | 何时用 |
 |---|---|---|
+| `sync` | 只同步代码到 111（**不碰容器**） | 改了脚本 / 文档，不想让容器重建（⇒ **不触发 DB 自动迁移**） |
+| `up` | **只按当前编排重建容器**（不 pull / 不 build） | 改了 `my-docker/` 编排、或已投递产物后让它生效 |
+| `push-ui` | 构建定制前端并投递 | **改前端源码**（投递即生效、**无需重启**） |
+| `push-app` | 在 111 用编译镜像编译后端 → 投递 → 重启 | **改后端 Go 源码**（热缓存约 **16s**，首次 2m02s） |
+| `push-reader` | 同步源码 + 重启 docreader | **改 docreader 源码**（秒级） |
+| `build` | 在 111 上**构建镜像**后重启 | 仅当**依赖清单 / 基础镜像 / 上游同步**变化时才需要（7~16 分钟） |
 | `deploy` | 首次部署 / 完整部署 | 第一次搭环境；或想完整重跑一遍 |
-| `update` | 推代码 → 拉取 → 重建容器 | **改完代码日常更新** |
-| `build` | 在 111 上构建镜像后重启 | 二开改了 Go / 前端 / docreader 源码 |
+| `update` | 推代码 → 拉取 → 重建容器（走 **pull**） | ⚠️ **慎用**：检测到本地构建镜像时会**自动改走 build**（约 16 分钟） |
 | `status` | 查看容器状态 | 想确认在不在跑 |
 | `logs [服务]` | 跟踪日志（默认 `app`） | 排查问题 |
-| `restart` | 重启容器 | 改了配置想生效 |
-| `health` | 健康检查 | 快速确认服务可用 |
+| `restart` | 重启容器 | 改了 `.env` 等需重建容器才生效的项（⚠️ `restart` **不应用新挂载**） |
+| `health` | 健康检查（**含 searxng 的"结果非空"校验**） | 快速确认服务可用 |
 | `compose-diff` | 对比官方与 `my-docker/` 的 compose 差异 | **上游更新后**核对；或怀疑 my-docker 过期时 |
 | `shell` | 登录 111 并进入部署目录 | 手工排查 |
 | `down` | 停止容器（**数据卷保留**） | 临时停服 |
@@ -188,8 +212,10 @@
 > #   2026-09-03 = 官方预构建镜像；今天的时间 = 本地源码构建
 >
 > # 判据 B（最强，见 2.4.1）：二进制里注入的 commit
-> ssh nanning-111 "docker exec WeKnora-app grep -ac 87bf42e4 /app/WeKnora"
-> #   与 111 上 git rev-parse --short=8 HEAD 比对，一致即证明跑的是该提交
+> ssh nanning-111 "cd /mnt/data/weknora && C=\$(git rev-parse --short=8 HEAD) && \
+>   docker exec WeKnora-app grep -ac \$C /app/WeKnora"
+> #   ≥1 次命中即证明跑的是该提交
+> #   ★ 不要写死具体 hash（本文早先写死了 87bf42e4，一有提交就过期）
 > ```
 >
 > **危险点**：`update` 里的 `pull` 会把本地构建的二开镜像**静默替换**回官方镜像 ——
@@ -221,24 +247,40 @@
 > `docreader` 那 6 个文件是 **SSRF 代理 + `web_parser.py`**（安全相关，且正是"导入 URL"
 > 用到的组件）⇒ **不能跳过构建 docreader**。所幸 **proto 未变**，gRPC 契约兼容。
 
+#### 2.4.0 ★ 先选命令（三层代码已外置，2026-09-22 起）
+
+**按"改了什么"选命令，不要默认跑全量 `build`**：
+
+| 改了什么 | 命令 | 实测耗时 |
+|---|---|---|
+| 前端源码（`my-frontend/`） | `push-ui` | 分钟级，**无需重启** |
+| 后端 Go（`internal/` 等） | `push-app` | **15.7s**（热缓存）／2m02s（首次） |
+| docreader（Python） | `push-reader` | **秒级** |
+| 编排（`my-docker/`） | `up` | 只重建 config-hash 变了的服务 |
+| **依赖清单 / 基础镜像 / 上游同步** | `build` | 7~16 分钟（**不可避免**） |
+
+> 原理、边界与全部踩过的坑（anydoc 静态库必需、编译产物与 gitignore、
+> 首次启用需重建容器、Go 编译缓存卷）见 `my-docs/12-应用代码外置/WeKnora-应用代码外置方案.md`。
+
 ```bash
 # 1. 本地改代码
 cd /Users/weikejia/CODE/my-agent-group/projects/rag-tools/WeKnora
 git checkout wkj-dev
-vim internal/xxx.go            # 或改 frontend/ 、docreader/
+vim internal/xxx.go            # 或改 my-frontend/ 、docreader/
 
-# 2. 提交
+# 2. 提交（sync_code 走 git ⇒ 未提交的改动到不了 111）
 git add -A && git commit -m "feat: 我的改动"
 
-# 3. 部署（build 模式会在 111 上构建镜像）
-./deploy/deploy-wkj-dev.sh build
+# 3. 按改动面投递（示例：改了后端 Go）
+./deploy/deploy-wkj-dev.sh push-app
 
-# 4. 自查：确认跑的确实是本地构建（看构建时间；并核二进制里的 commit）
-ssh nanning-111 "docker image inspect wechatopenai/weknora-app:latest --format '{{.Created}}'"
-ssh nanning-111 "docker exec WeKnora-app grep -ac $(git rev-parse --short=8 HEAD) /app/WeKnora"
+# 4. 自查：核二进制里注入的 commit（★ 判据要适配载体，见 2.4.1）
+ssh nanning-111 "cd /mnt/data/weknora && C=\$(git rev-parse --short=8 HEAD) && \
+  docker exec WeKnora-app grep -ac \$C /app/WeKnora && echo \"期望提交 \$C\""
 ```
 
-> **`build` 模式耗时较长**：Go 编译 + 前端 npm 构建 + docreader 镜像，首次可能 20~40 分钟（111 是 32 核，比本机快）。之后有构建缓存会快很多。
+> **只有 `build` 是慢的**（Go 编译 + 前端 npm + docreader 镜像；首次 20~40 分钟，
+> 有缓存后约 16 分钟）。日常改代码**不该见到 16 分钟** —— 见到了说明命令选错。
 
 #### 2.4.1 怎么确认线上跑的是哪一版（已支持直接查）
 
@@ -662,10 +704,16 @@ WSS（包括内网）」）。机制与排查详见 `my-docs/04-功能机制解�
       耗时 15m57s。二进制内注入的 commit = `87bf42e4` = 111 上 `wkj-dev` 的 HEAD；
       迁移 `90 → 106`（`dirty=false`）；数据与基线逐项一致。详见 §5.5。
 - [ ] **首次部署后建议做的加固**：把 `DISABLE_REGISTRATION` 改为 `true`（注册完管理员账号之后）。
-- [ ] **备份策略**：方案已成文（`11-数据安全与备份/WeKnora-数据安全与备份方案.md`），**尚未实施**。
-      三个关键点：① 备份集**必须含 `.env`**（含 `SYSTEM_AES_KEY`，否则库内密文字段静默失效）；
-      ② **同盘备份只能防误操作**，数据与备份同在 `/mnt/data`，防硬件故障需异地副本（目标待定）；
-      ③ 备份应做成脚本并在动 `app` 前触发（`app` 启动即跑迁移，见该文 §2.3）。
+- [x] **✅ 备份策略已实施（2026-09-21）**：`my-scripts/backup-weknora.sh`，每天 **06:00**（111 的 cron）、
+      保留 **10 份**、落 `/mnt/data/backups/weknora/`。**✅ 恢复演练已于 2026-09-22 完成**（临时库全项一致）。
+      三个关键点见 `my-docs/11-数据安全与备份/WeKnora-数据安全与备份方案.md`：
+      ① 备份集**必须含 `.env`**（含 `SYSTEM_AES_KEY`，否则库内密文字段**静默失效**）；
+      ② **同盘备份只能防误操作**（源与备份同在 `/mnt/data`），防硬件故障需异地副本 —— 老魏已明确**接受这个边界**；
+      ③ **动 `app` 前先备份**（`app` 启动即跑迁移，见该文 §2.3）。
+      ⬜ 仍缺：用备份集**重建一个在线服务**（属灾难恢复 SOP 演练，与"备份集是否有效"是两个问题）。
+- [x] **✅ searxng 已接入并测通（2026-09-22）**：`--profile searxng` 已进 `$DC`，引擎集
+      = bing（第一优先）+ 360search。SSOT：`my-docs/14-联网搜索/WeKnora-自带搜索SearXNG接入与引擎选型.md`。
+      ⬜ 仍缺：在 **Web 控制台**加 Provider（类型 SearXNG、URL `http://searxng:8080`）—— 需登录。
 - [ ] **`ops/hosts/nanning-111/services.md` 待登记**本服务（端口 41200/41201）。
 - [ ] 110 的 Ollama 是单并发槽，若用其做 embedding，需留意与其它调用方的排队冲突。
 - [ ] 111 上的代码克隆会落后于本机（`sync_code` 只在执行脚本时才对齐）——想知道线上是哪一版，直接
