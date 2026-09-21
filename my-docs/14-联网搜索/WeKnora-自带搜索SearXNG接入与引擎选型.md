@@ -14,7 +14,8 @@
 |---|---|
 | 容器接入了吗 | ✅ `--profile searxng`（`$DC` 单点启用）+ `compose_up` 显式点名启动 |
 | 测通了吗 | ✅ 中文查询"政府投资项目" → **15 条**（bing 10 + 360search 5），仅 quark 报 CAPTCHA |
-| 引擎怎么选 | **bing（权重最高）+ 360search**；quark 保留（当前被反爬）；**搜狗、百度不用** |
+| 引擎怎么选 | **bing（第一优先，weight 2.0）+ 360search（补充，1.0）**；**搜狗、百度、quark 都不用** |
+| 实测效果 | 中文查询「政府采购」→ **15 条**（bing 10 + 360search 5），**无未响应引擎** |
 | 还需要做什么 | ⬜ 在控制台加 Provider（类型 `SearXNG`、URL `http://searxng:8080`）—— 见 §5 |
 | 端口 | 宿主 `127.0.0.1:41291`（仅回环、诊断用）；**容器间走 `http://searxng:8080`** |
 
@@ -69,7 +70,7 @@ grep -oiE '<title>[^<]*' /tmp/x.html | head -1               # 反爬页会暴�
 | 头条搜索 | 200 | 1.4 MB | 2 | `test-头条搜索` | ⚠️ searxng 无对应模块 |
 | seznam | 200 | 98 KB | 1 | `政府 – Seznam.cz` | ⚠️ 捷克引擎，中文结果极少 |
 | **baidu** | 200 | 1.4 KB | 0 | **`百度安全验证`** | ❌ 反爬拦截（已移除） |
-| quark | 200 | 1.3 KB | 0 | （无 title） | ❌ 反爬，searxng 报 `CAPTCHA` |
+| quark | 200 | 1.3 KB | 0 | （无 title） | ❌ 反爬，searxng 报 `CAPTCHA`（**已移除**） |
 | mojeek | 200 | 5.5 KB | 0 | **`Captcha`** | ❌ 验证码 |
 | yandex | 200 | 41 KB | 0 | **`Verification`** | ❌ 验证页 |
 | presearch / luxxle | 403 | — | 0 | `Just a moment...` | ❌ Cloudflare |
@@ -86,15 +87,13 @@ grep -oiE '<title>[^<]*' /tmp/x.html | head -1               # 反爬页会暴�
 ```yaml
 use_default_settings:
   engines:
-    keep_only: [bing, "360search", quark]
+    keep_only: [bing, "360search"]
 engines:
   - name: bing
-    weight: 2.0                    # 最高优先（老魏定）
+    weight: 2.0                    # ★ 第一优先（老魏定）
     base_url: https://cn.bing.com  # ★ 默认 www.bing.com 本网络不可用
     categories: [general]          # ★ 官方默认定义里 bing 没有 categories 键
   - name: "360search"
-    weight: 1.0
-  - name: quark
     weight: 1.0
 ```
 
@@ -156,7 +155,7 @@ ssh nanning-111 'docker exec -w /usr/local/searxng WeKnora-searxng \
   /usr/local/searxng/.venv/bin/python -c "
 from searx.settings_loader import load_settings
 s,_=load_settings(); print(sorted(e[\"name\"] for e in s[\"engines\"]))"'
-#   期望：['360search', 'bing', 'quark']
+#   期望：['360search', 'bing']
 
 # 3) ★ 真实搜索 —— 判据是「结果非空」，不是状态码
 ssh nanning-111 'curl -s --max-time 45 -A "Mozilla/5.0" \
