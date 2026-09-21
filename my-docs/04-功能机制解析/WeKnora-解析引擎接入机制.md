@@ -9,7 +9,10 @@
 2. 引擎分两类：**Go 侧本地引擎**（能配 endpoint）与 **docreader 侧 Python 引擎**（**没有** endpoint 概念）。判据见 §三。
 3. 接外部服务只有两条路：**对齐 WeKnora 已支持的协议**（零代码），或 **新增一个 Go 侧引擎**（要改官方文件）。
 4. ★ **图片 OCR 不在解析引擎体系内** —— 它走知识库的「视觉模型」（协议仅 OpenAI / Ollama），
-   docreader 侧**没有**任何 OCR 配置项。想让外部 OCR 服务干活，只能从解析引擎进。见 §六。
+   docreader 侧**没有**任何 OCR 配置项。见 §六。
+5. ★★ **扫描件 PDF 的拆页已由 docreader 完成**（逐页渲染成 JPEG），Go 侧只做「最后一跳」的图片 OCR；
+   而这一跳是**标准 OpenAI 兼容调用** ⇒ 让外部服务满足该协议即可**用「模型」配置接管**，
+   WeKnora 零源码改动。见 §八。
 
 ---
 
@@ -216,21 +219,81 @@ flowchart TD
 
 ⇒ 它既不是解析引擎协议，也不是视觉模型协议（§六）⇒ **纯配置接不上**。
 
-### 8.2 ★ 不改 WeKnora 源码的三条路
+### 8.2 ★ 关键前提：扫描件 PDF 的链路里，「拆页」早就做好了
 
-前置认知：**WeKnora 侧要的只是一个 `/layout-parsing` 形态的端点**。
-只要 110 侧能提供它，**WeKnora 一行代码不用改**。
+**WeKnora 处理扫描件 PDF 的原生链路**（builtin 引擎）：
 
-| 方案 | 110 侧要做的事 | GPU 显存增量 | 能处理纯图片 PDF | 输出质量 |
+```mermaid
+flowchart TD
+    P["扫描件 PDF"] --> D["docreader · PDFParser<br/>逐页分类 → 扫描页渲染 JPEG<br/>DPI 200 / 长边 ≤2000px"]
+    D --> T["标 image_source_type=scanned_pdf"]
+    T --> G["Go · image_multimodal.go"]
+    G -->|"逐页 OCR"| V["vlmModel.Predict(imgBytes, ocr_prompt)"]
+    G -->|"逐页 caption"| C["vlmModel.Predict(imgBytes, caption_prompt)"]
+    V --> R["RemoteAPIVLM<br/>OpenAI 兼容 chat/completions<br/>image_url = data:image/png;base64,…"]
+```
+
+⇒ **拆页、渲染、DPI / 质量参数全由 docreader 做了**，Go 侧只差「把这张图送到哪儿」这**最后一跳**。
+而这一跳是**标准 OpenAI 兼容的视觉调用** ⇒ 可以被一个协议适配壳接管。
+
+### 8.3 ★ 推荐：给 110 加一个 OpenAI 兼容适配壳
+
+**思路**：写一个极小的服务实现 `POST /v1/chat/completions` ——
+从 `messages[].content[].image_url` 的 data URI 解出图片，转手 multipart 打给 36741 的 `/api/ocr`，
+把 `results[].text` 包成 `choices[0].message.content` 返回。
+
+**为什么它优于其他方案**：
+
+| | **甲 · OpenAI 适配壳（推荐）** | 乙 · `/layout-parsing` 端点 | 丙 · WeKnora 新增引擎 |
+|---|---|---|---|
+| WeKnora 源码 | ✅ **零改动**（只在「模型」里加一条） | ✅ 零改动 | ❌ 改 4 处官方文件 |
+| 110 侧工作 | **只做协议转换** | 协议转换 **+ 自己拆 PDF 页** | 零 |
+| 谁拆 PDF | **docreader（现成，参数已调好）** | 自己写，要重调 DPI / 质量 | 自己写 |
+| 显存增量 | 零 | 零 | 零 |
+| 走的链路 | builtin 拆页 + 图片 OCR（**扫描件 PDF 的原生链路**） | 解析引擎（整份 PDF） | 解析引擎 |
+
+**协议匹配度极高**：docreader 渲染出来的是 JPEG 页图，36741 收的正是图片 ——
+中间只差「换个信封」。渲染尺寸（长边 ≤2000px）**完全落在 36741 的限制内**（≤4096px / ≤20MB）。
+
+**落地三步**：
+
+1. **110 侧**：写适配壳（见下方必做清单）；
+2. **WeKnora 设置 → 模型**：新增一个 OpenAI 兼容模型，
+   `base_url = http://10.168.1.110:<port>/v1` —— 端点拼成 `{base}/chat/completions`
+   （`internal/models/api/openaicompletions/client.go` 的 `defaultPath`）；
+3. **知识库 → 视觉模型**：选这个模型。
+
+**适配壳必做清单**（按重要性）：
+
+| # | 事项 | 为什么 |
+|---|---|---|
+| 1 | **按 prompt 分流** | `image_multimodal.go` 对**同一张图调两次**：OCR（prompt 含 `You are an OCR assistant`）与 caption（`Provide a brief and concise description…`）。PP-OCRv6 做不了 caption ⇒ **对 caption 请求返回空串**即可（Caption 为空则不生成对应 chunk） |
+| 2 | **串行队列 + 429 退避** | 36741 串行 ≈1 张/s；一篇 N 页扫描件 = N 次调用，并发会大面积撞 429 |
+| 3 | **档位写死** | 这条路没有「档位」配置位，tiny / small / medium 在适配壳里定 |
+| 4 | **尺寸兜底** | 收到超限图时按 36741 限制（≤4096px / ≤20MB）缩放或拒绝 |
+
+**三个必须知道的点**：
+
+- **SSRF 已放行**：`validateVLMBaseURL` 走 `ValidateURLForSSRF`
+  （`internal/models/vlm/transport.go`），而 `10.168.1.110` 已在 `SSRF_WHITELIST`
+  （`deploy/deploy-wkj-dev.sh`）。
+- **模型分发判据**：`internal/models/vlm/vlm.go` 只在 `interface_type == "ollama"` 时走 Ollama，
+  **其余一律 `NewRemoteAPIVLM`**（OpenAI 兼容）⇒ 自定义 base_url 的模型天然走这条路。
+- **语义错位（排查时记得）**：从 WeKnora 视角看它「以为」在调视觉模型 ——
+  日志会出现 `[VLM] Calling chat protocol, model=…`，**但背后跑的是 PP-OCRv6**。
+  这不是 hack，是标准协议适配；但排查时别被日志名带偏。
+
+### 8.4 备选：不改 WeKnora 源码的另外两条路
+
+若不想走「视觉模型」通道（或需要解析引擎侧的独立性），可让 110 提供
+**`/layout-parsing` 形态**的端点 —— WeKnora 侧同样零改动，只是改在**解析引擎**里配：
+
+| 方案 | 110 侧要做的事 | 显存增量 | 能处理纯图片 PDF | 输出质量 |
 |---|---|---|---|---|
-| **一** | 起 PP-StructureV3 产线：`paddlex --serve --pipeline PP-StructureV3` | ❌ **峰值 17 GB**（V100 官方 benchmark） | ✅ 原生吃 PDF | ★★★ 版面 / 表格 |
-| **二（推荐）** | 给 36741 加一个 `/layout-parsing` 兼容端点（约 40–80 行；PDF 自己拆页） | ✅ **零增量**（复用现有服务） | ✅（自行拆页） | ★ 纯文本行 |
-| **三** | 独立写一个协议转换小服务（同方案二，只是换个进程） | ✅ 零增量 | ✅（自行拆页） | ★ 纯文本行 |
+| **乙** | 加 `/layout-parsing` 兼容端点（约 40–80 行，**含自行拆页**） | ✅ 零 | ✅（自行拆页） | ★ 纯文本行 |
+| 丙 | 独立写一个协议转换小服务（同乙，换个进程） | ✅ 零 | ✅（自行拆页） | ★ 纯文本行 |
 
-> 方案一曾被我列为**首选**，理由是「响应字段天然对齐 + PP-StructureV3 的通用 OCR 子产线可挂 PP-OCRv6」。
-> **在「只用 PP-OCRv6、尽量省显存」的约束下这个推荐是错的**，已修正为方案二。
-
-#### 为什么不推荐方案一 —— 显存账
+#### 为什么排除 PP-StructureV3 —— 显存账
 
 | | 36741（纯 PP-OCRv6 通用 OCR 产线） | PP-StructureV3 |
 |---|---|---|
@@ -247,12 +310,12 @@ flowchart TD
 - **PP-StructureV3 本身不是 VL 路线**（全是传统 CV 模型：RT-DETR-L / PP-OCR / SLANeXt / PP-FormulaNet），
   但「费显存」这个判断是对的 —— 原因是一堆额外模型，不是 VLM。
 
-#### 方案二的实测优势
+#### 方案乙的附带好处
 
-包装层是自己写的 ⇒ 那 18 个 PaddleOCR-VL 专有参数**可以直接忽略**，
-**不存在**「服务端是否容忍多余字段」这个未知 —— 而方案一有这个未知。
+包装层自写 ⇒ 那 18 个 PaddleOCR-VL 专有参数**可以直接忽略**，
+**不存在**「服务端是否容忍多余字段」这个未知 —— 而 PP-StructureV3 那条路有这个未知。
 
-### 8.3 本地实测：客户端侧风险已排除
+### 8.5 本地实测：客户端侧风险已排除（针对方案乙）
 
 用 mock 服务模拟 PP-StructureV3 的 `/layout-parsing`（响应结构照抄官方文档），
 跑 WeKnora 真实的 `PaddleOCRVLReader`：
@@ -298,7 +361,7 @@ WeKnora 发的都是这套请求、读的都是 `markdown.text` ⇒ 对方案一
 > 是否容忍多余字段（默认行为是忽略，但未对真实服务验证）。
 > **走方案二则没有这个未知** —— 包装层自写，可全部忽略。
 
-### 8.4 下策：在 WeKnora 新增 Go 侧引擎（§七 的路线 B）
+### 8.6 下策：在 WeKnora 新增 Go 侧引擎（§七 的路线 B）
 
 即改 `engines.go` / `tenant.go` / `parser_url_security.go` 等官方文件，
 让 WeKnora 直接说 36741 的 multipart 协议。**不推荐**，因为：
