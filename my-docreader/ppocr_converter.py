@@ -369,6 +369,33 @@ def render_pdf_pages(pdf_bytes: bytes, dpi: int = RENDER_DPI,
         pdf.close()
 
 
+def join_pages(pages: list[str]) -> str:
+    """页间拼接：**只在这里做跨页续接判断**。
+
+    背景：按页独立 OCR 后，页尾与页首若是同一句话（「…项目执行」+「方挪用…」），
+    用 `\\n\\n` 拼接会**人为制造一个段落边界** —— 下游 chunker 会切在那里，
+    导致同一句被拆进两个 chunk。
+
+    注意：跨页断裂本身是**所有 PDF 提取的通用现象**（有文本层的 PDF 也一样，
+    因为页边界就是硬边界）。这里能改善的是「不要把断句强化成段落边界」。
+
+    判据：上一页末尾不是句读/收尾符号 ⇒ 视为续句，直接相连；否则按段落分隔。
+    """
+    if not pages:
+        return ""
+    closers = "。！？；：!?;:）】」》\"'"
+    out = pages[0].rstrip()
+    for nxt in pages[1:]:
+        nxt = nxt.strip()
+        if not nxt:
+            continue
+        if out and out[-1] not in closers:
+            out += nxt                       # 续句：直接相连
+        else:
+            out += "\n\n" + nxt
+    return out
+
+
 # --------------------------------------------------------------------------
 # 转换器
 # --------------------------------------------------------------------------
@@ -433,7 +460,7 @@ class PdfConverterWithPPOCR(DocumentConverter):
 
         logger.info("[PPOCRv6] converted %d page(s), %d chars",
                     len(pages_md), sum(len(p) for p in pages_md))
-        return DocumentConverterResult(markdown="\n\n".join(pages_md), title=None)
+        return DocumentConverterResult(markdown=join_pages(pages_md), title=None)
 
 
 def build_converter() -> PdfConverterWithPPOCR:
