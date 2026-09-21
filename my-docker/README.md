@@ -18,6 +18,7 @@
 | 服务 | 来源 | 说明 |
 |---|---|---|
 | `postgres` · `redis` · `docreader` · `app` · `frontend` | 官方基底 | 本层只改各自的定制项（构建源、端口） |
+| **`searxng`** · `searxng-init` | 官方基底（**profile 门控**） | 自带网络搜索，经 `$DC` 的 `--profile searxng` 启用。**引擎清单由站点定制**：`my-docker/searxng/settings.yml`（国内网络只有 bing / 360search 可用，见 `my-docs/14-联网搜索/`） |
 | **`frontend-wkj`** | **本层新增** | 定制前端，源码 `my-frontend/` |
 | **`nginx`** | **本层新增** | 接入层：两个前端的 HTTPS/WSS 统一入口 |
 
@@ -43,7 +44,7 @@
 
 | 端口 | 指向 | 说明 |
 |---|---|---|
-| `41291` | `searxng`（自带搜索） | **profile 门控** —— 不加 `--profile searxng` 不会启动。容器之间访问走容器网络 `http://searxng:8080`，与这个宿主端口无关（它只用于宿主侧诊断） |
+| `41291` | `searxng`（自带搜索） | **已启用**（`deploy-wkj-dev.sh` 的 `$DC` 带 `--profile searxng`）。容器之间访问走容器网络 `http://searxng:8080`，与这个宿主端口无关（它只绑回环、仅用于宿主侧诊断） |
 
 ## 二、目录结构
 

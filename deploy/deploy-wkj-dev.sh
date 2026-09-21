@@ -817,6 +817,11 @@ cmd_health() {
   printf '后端: '; ssh "$SSH_HOST" "curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 6 http://localhost:${APP_PORT}/health"
   printf '官方前端(https): '; ssh "$SSH_HOST" "curl -sk -o /dev/null -w 'HTTP %{http_code}\n' --max-time 6 https://localhost:${FRONTEND_PORT}/"
   printf '定制前端(https): '; ssh "$SSH_HOST" "curl -sk -o /dev/null -w 'HTTP %{http_code}\n' --max-time 6 https://localhost:41280/"
+  # 自带搜索：与 health_check 里同一口径 —— **必须验「有结果」，不能只看 200**
+  # （searxng 在引擎全不可达时仍返回 200，只是 results 为空）
+  printf '自带搜索(searxng): '
+  ssh "$SSH_HOST" "n=\$(docker exec weknora-nginx wget -q -O - --timeout=25 'http://searxng:8080/search?q=weknora&format=json' 2>/dev/null | grep -o '\"url\":' | wc -l); \
+    if [ \"\${n:-0}\" -gt 0 ]; then echo \"HTTP 200，命中 \${n} 条结果\"; else echo '结果为空（多为引擎不可达，看 logs searxng）'; fi"
 }
 
 cmd_down() {
