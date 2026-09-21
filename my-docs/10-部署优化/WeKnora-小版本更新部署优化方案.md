@@ -54,6 +54,18 @@
 
 流程：本地 `npm run build` → `rsync dist/ nanning-111:/mnt/data/weknora-wkj-dist/` → **立即生效**（nginx 直接读文件，无需重启）。
 
+**「改变代码来源」是什么意思**：bind mount 是**遮盖**，不是合并 ——
+
+- **现在**：容器内 `/usr/share/nginx/html` 的真身来自**镜像层**
+  （构建时 `COPY --from=builder /frontend/dist /usr/share/nginx/html`，`frontend/Dockerfile:61`）
+- **挂载后**：同一路径被宿主目录**盖住**，镜像里那份**不再生效**
+
+⇒ 连带三个后果：
+
+1. **镜像不再自包含** —— 光有镜像起不来完整服务，还要求那个目录就位；
+2. **「跑的是哪一版」要看目录内容**，不能只看镜像 ID（原有的 `wkj-last-build` 登记机制覆盖不到它）；
+3. **目录空 ⇒ 页面 404**（镜像里那份被遮住，兜不住）。
+
 ## ★ 四、方案 A 有一个必须防的坑
 
 `docker-entrypoint.sh` 启动时会**往该目录写运行时配置**：
