@@ -63,9 +63,11 @@ services:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
 
   # ─────────────────────────────────────── 定制前端（源码 my-frontend/）
-  # my-frontend/ 是官方 frontend/ 的**逐字副本**（复制于 2026-09-21，770 文件，
+  # my-frontend/ 是官方 frontend/ 的**逐字副本**（已同步至官方 main `cc82e75c`，
   # `diff -r frontend my-frontend` 零差异）—— 保持逐字是为了以后与上游合并时，
   # diff 所见即"我们刻意的改动量"，没有噪声。定制全在本文件这一层。
+  # ★ 每次上游同步后都要跟一次副本同步，否则上述判据会失效（2026-09-21 实测：
+  #   上游一轮更新即产生 66 项差异，且全部来自官方演进）。
   frontend-wkj:
     # ★ 独立镜像 tag：绝不能与官方共用 wechatopenai/weknora-ui，
     #   否则 pull / build 会互相静默覆盖（该风险已在本脚本里针对 app/ui 处理过，这里从源头避免）。
