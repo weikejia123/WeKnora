@@ -14,6 +14,8 @@
 #   ./deploy-wkj-dev.sh deploy      首次部署 / 完整部署（幂等，可重复执行）
 #   ./deploy-wkj-dev.sh update      更新：推代码 → 拉取 → 重建容器
 #   ./deploy-wkj-dev.sh sync        只同步代码到 111（**不碰容器**，故不触发 DB 自动迁移）
+#   ./deploy-wkj-dev.sh push-ui     构建前端并投递到 111（**无需重启**，立即可见）
+#   ./deploy-wkj-dev.sh push-reader 同步代码并重启 docreader（Python 免编译，秒级）
 #   ./deploy-wkj-dev.sh build       二开构建：在 111 上构建镜像后重启
 #   ./deploy-wkj-dev.sh status      查看容器状态
 #   ./deploy-wkj-dev.sh logs [svc]  查看日志（默认 app）
@@ -548,6 +550,48 @@ cmd_update() { preflight_local; sync_code; ensure_env; compose_up pull; health_c
 # 重建 app 容器会触发数据库自动迁移（AUTO_MIGRATE 默认开且失败不阻断），
 # 详见 my-docs/11-数据安全与备份/WeKnora-数据安全与备份方案.md §2.3。
 cmd_sync()   { preflight_local; sync_code; }
+
+# ── 应用代码外置：投递命令（配合 overlay 里的 volumes 挂载）
+# 思路：日常改动不必重建镜像 / 容器 —— 编译产物直接落到 111 的映射目录即可。
+# 背景与边界见 my-docs/12-应用代码外置/WeKnora-应用代码外置方案.md
+cmd_push_ui() {
+  step "① 构建定制前端（本地）"
+  local fe="$REPO_ROOT/my-frontend"
+  [ -f "$fe/package.json" ] || die "找不到 $fe/package.json"
+  if [ ! -d "$fe/node_modules" ]; then
+    echo "  首次运行：安装依赖（npm ci，较慢）"
+    ( cd "$fe" && npm ci ) || die "npm ci 失败"
+  fi
+  # 显式注入 commit（vite.config.ts 的 resolveFrontendCommit 也会回落到
+  # `git rev-parse --short HEAD`，但显式传更确定，不依赖 cwd/环境）。
+  # 产物里会带 `w="<7位>"`，用于验证「111 上跑的到底是哪一版」。
+  ( cd "$fe" && VITE_FRONTEND_COMMIT="$(git -C "$REPO_ROOT" rev-parse --short=7 HEAD)" npm run build ) \
+    || die "前端构建失败（npm run build）"
+  [ -d "$fe/dist" ] || die "构建未见产物：$fe/dist"
+  ok "已构建（$(du -sh "$fe/dist" | cut -f1)）"
+
+  step "② 投递到 111 的映射目录"
+  ssh "$SSH_HOST" "mkdir -p '$REMOTE_DIR/my-frontend/dist'"
+  # --delete 保证与本地 dist 严格一致（清掉旧的 hash 资源）；
+  #   ★ exclude config.js —— 它由容器 entrypoint 在启动时生成，本地 dist 里没有，
+  #     若被删掉则页面加载会 404，而容器不会自动重建它。
+  # 不用 -a：本地是 macOS 用户，保留 owner/group 会在 111 上触发无权限 chown。
+  rsync -rlpt --delete --exclude=config.js \
+    "$fe/dist/" "$SSH_HOST:$REMOTE_DIR/my-frontend/dist/"
+  ok "已投递 ⇒ **立即可见，无需重启容器**（内层 nginx 直接读文件）"
+
+  step "③ 自证：容器内看到的文件数"
+  ssh "$SSH_HOST" "docker exec WeKnora-frontend-wkj sh -c 'ls /usr/share/nginx/html | wc -l'" \
+    | sed 's/^/  容器内条目数：/'
+}
+
+cmd_push_reader() {
+  # docreader 是 Python（解释型）⇒ 真·"换文件即生效"：源码同步后重启容器即可。
+  sync_code
+  step "重启 docreader（加载新源码）"
+  ssh "$SSH_HOST" "$DC restart docreader"
+  ok "已重启 docreader（秒级）"
+}
 cmd_build()  { preflight_local; sync_code; ensure_env; compose_up build; health_check; }
 
 cmd_status() {
@@ -629,6 +673,8 @@ readonly REPO_ROOT
 
 case "${1:-help}" in
   deploy|update|build|sync|status|restart|health|down|shell) "cmd_$1" "${@:2}" ;;
+  push-ui)      cmd_push_ui ;;
+  push-reader)  cmd_push_reader ;;
   logs)         cmd_logs "${2:-app}" ;;
   compose-diff) cmd_compose_diff ;;
   help|-h|--help) cmd_help ;;

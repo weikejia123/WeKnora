@@ -109,6 +109,17 @@ services:
       retries: 3
       start_period: 10s
 
+    # ── 应用代码外置（2026-09-21）：静态文件改由宿主目录提供
+    # 日常改前端 = 本地 `npm run build` → rsync dist 到该目录 ⇒ **立即生效**，
+    # 无需重建镜像、无需重启容器（内层 nginx 直接读文件）。
+    # ★ **不能加 `:ro`** —— docker-entrypoint.sh 启动时要往此目录写运行时配置
+    #   `config.js`；只读挂载会让容器直接启动失败。
+    # ★ 首次启用前**必须先填充**该目录（从现有容器 `docker cp` 拷一份），
+    #   否则空目录 ⇒ 页面 404 —— 镜像里那份被挂载**遮住**，兜不住。
+    # ★ 该目录已被 gitignore，故 `sync_code` 的 `git reset --hard` 不会动它。
+    volumes:
+      - ./my-frontend/dist:/usr/share/nginx/html
+
     restart: unless-stopped
 
   # ──────────────────────────────────────────────── 接入层（HTTPS/WSS 入口）
@@ -200,6 +211,16 @@ services:
         # （protoc 另有更优路径：预置到 packages/ 走 Dockerfile 自带离线分支，
         #   由部署脚本 _ensure_build_artifacts 处理）
         - GH_PROXY=${GH_PROXY:-https://gh-proxy.com/}
+
+    # ── 应用代码外置（2026-09-21）
+    # docreader 是 Python（解释型）⇒ **真·"换文件即生效"**：`sync` 更新源码后
+    # `docker restart WeKnora-docreader` 即可（秒级），无需重建镜像。
+    # ★ 依赖装在 `/app/.venv`，与源码目录 `/app/docreader` **分开**
+    #   （Dockerfile.docreader：VIRTUAL_ENV=/app/.venv，源码 COPY 到 /app/docreader）
+    #   ⇒ 挂源码**不会**遮住依赖。
+    #   ⚠️ 若将来官方把依赖挪进源码目录，此挂载会遮住它 —— 届时须改回镜像内提供。
+    volumes:
+      - ./docreader:/app/docreader:ro
 
   # ───────────────────────── 自带搜索（官方已有的**可选**组件，非我们新增）
   # 官方基底已定义 searxng + searxng-init（含 cap_drop 降权，以及用 init 容器把
