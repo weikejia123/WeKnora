@@ -58,6 +58,13 @@ def _env_bool(key: str, default: bool) -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _env_float(key: str, default: float) -> float:
+    try:
+        return float(_env_str(key, str(default)))
+    except ValueError:
+        return default
+
+
 BASE_URL = _env_str("PPOCR_BASE_URL", "http://10.168.1.110:36741")
 TIERS = _env_str("PPOCR_TIERS", "medium")
 HTTP_TIMEOUT = _env_int("PPOCR_TIMEOUT_SECONDS", 60)
@@ -68,6 +75,16 @@ FALLBACK = _env_bool("PPOCR_FALLBACK", True)
 MAX_RETRIES = _env_int("PPOCR_MAX_RETRIES", 3)
 # 0 = 不限制。110 是串行 ≈1 张/s，超大 PDF 会顶穿上游超时，可在此设上限。
 MAX_PAGES = _env_int("PPOCR_MAX_PAGES", 0)
+
+# --- 接管范围 ---------------------------------------------------------------
+# 只接管「扫描件为主」的 PDF。若不加这道闸，KB 一旦选了 markitdown 引擎，
+# **该库所有 PDF**（含带文本层的）都会走 OCR —— 既丢版面能力、又白烧 GPU。
+# 关掉（PPOCR_SCAN_ONLY=false）则回到「接管全部 pdf」的行为。
+SCAN_ONLY = _env_bool("PPOCR_SCAN_ONLY", True)
+# 与 docreader builtin 同口径：DOCREADER_PDF_SCAN_MIN_CHARS 默认也是 10。
+SCAN_MIN_CHARS_PER_PAGE = _env_int("PPOCR_SCAN_MIN_CHARS", 10)
+# 「扫描页」占全部页的比例达到该值，整份文档判为扫描件。
+SCAN_PAGE_RATIO = _env_float("PPOCR_SCAN_PAGE_RATIO", 0.5)
 
 # 110 是串行服务（≈1 张/s）。docreader 的 gRPC 有多个 worker，
 # 所以串行化必须放在**进程级**，而不是只在单个文档内部串行。
@@ -416,6 +433,43 @@ def join_pages(pages: list[str]) -> str:
     return out
 
 
+def looks_like_scanned_pdf(
+    pdf_bytes: bytes,
+    min_chars: int = SCAN_MIN_CHARS_PER_PAGE,
+    page_ratio: float = SCAN_PAGE_RATIO,
+) -> bool:
+    """整份 PDF 是否以「扫描页（无可靠文本层）」为主。
+
+    判据：文本层有效字符数 < ``min_chars`` 的页，占比是否达到 ``page_ratio``。
+
+    ★ 这是**整份文档级**决策，不做逐页混合处理 —— 理由有二：
+      ① markitdown 的 converter 协议本身就是「一个 converter 接管整份文件」，
+         逐页混合要么自己实现文本层抽取（与 builtin 的 1600 行重复造轮子），
+         要么接受「有文本层的页被 OCR」；
+      ② 混合型 PDF 判为「非扫描件」时交给内置转换器，是**保守选择** ——
+         漏掉的那几页扫描页本来就不是本方案引入的损失。
+
+    异常一律由调用方兜住（见 ``accepts``），此处不吞。
+    """
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(io.BytesIO(pdf_bytes))
+    try:
+        total = len(pdf)
+        if total == 0:
+            return True
+        scanned = 0
+        for index in range(total):
+            page = pdf[index]
+            text = page.get_textpage().get_text_range() or ""
+            if len(text.strip()) < min_chars:
+                scanned += 1
+        need = max(1, int(total * page_ratio + 0.5))
+        return scanned >= need
+    finally:
+        pdf.close()
+
+
 # --------------------------------------------------------------------------
 # 转换器
 # --------------------------------------------------------------------------
@@ -435,7 +489,39 @@ class PdfConverterWithPPOCR(DocumentConverter):
     # markitdown 0.1.3：accepts(file_stream, stream_info, **kwargs)
     def accepts(self, file_stream: BinaryIO, stream_info: StreamInfo, **kwargs: Any) -> bool:
         ext = (stream_info.extension or "").lower().lstrip(".")
-        return ext == "pdf"
+        if ext != "pdf":
+            return False
+        if not SCAN_ONLY:
+            return True
+
+        # ★ 只接管「扫描件为主」的 PDF。
+        #   判不出来（异常）时**交回内置实现** —— 本方案的定位是补足扫描件，
+        #   而不是接管全部 PDF 处理；判据失效时保守，避免静默改变官方行为。
+        try:
+            file_stream.seek(0)
+            probe_bytes = file_stream.read()
+        except Exception as exc:
+            logger.warning("[PPOCRv6] accepts(): stream unreadable (%s); skip", exc)
+            return False
+        finally:
+            try:
+                file_stream.seek(0)   # 复位 —— convert() 还要从头读
+            except Exception:
+                pass
+
+        try:
+            scanned = looks_like_scanned_pdf(probe_bytes)
+        except Exception as exc:
+            logger.warning("[PPOCRv6] accepts(): scan probe failed (%s); skip", exc)
+            return False
+
+        logger.info(
+            "[PPOCRv6] accepts(): %s",
+            "scanned PDF → handled here"
+            if scanned
+            else "has a text layer → left to the built-in converter",
+        )
+        return scanned
 
     def convert(self, file_stream: BinaryIO, stream_info: StreamInfo,
                 **kwargs: Any) -> DocumentConverterResult:
