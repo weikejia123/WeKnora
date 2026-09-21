@@ -1,0 +1,90 @@
+# ==============================================================================
+# my-docker/searxng/settings.yml —— 站点定制的 SearXNG 配置
+#
+# ★ 为什么需要这份文件（而不是直接用官方 docker/searxng/settings.yml）
+#   官方模板是 `use_default_settings: true`，即启用上游**全部默认引擎**。
+#   而 111 在国内网络，实测默认启用的引擎**全部不可达**：
+#       brave · duckduckgo · google cse · wikidata · wikipedia ⇒ 搜索返回 **0 条**
+#   ⚠️ 注意失败形态是**静默的**：HTTP 仍返回 200，只是 results 为空 ——
+#      光看状态码会误判成"部署成功"。判据必须是 results 非空。
+#
+# ★ 实测可达性（2026-09-22，111 宿主 curl，与容器同一网络出口）
+#     200：baidu · cn.bing.com · sogou · so.com(360) · quark.sm.cn · mojeek
+#     不可达：google · duckduckgo
+#
+# ★ 生效链路：searxng-init（oneshot）把本文件拷进命名卷 searxng_config，
+#   searxng 容器随后启动并读取。overlay 里已把 searxng-init 的模板挂载
+#   指向本文件（`volumes: !override`）。改完重建两个容器即生效：
+#     ./deploy/deploy-wkj-dev.sh up
+#
+# ★ server.secret_key 必须保留占位值 `ultrasecretkey` —— searxng 的 entrypoint
+#   会用环境变量 SEARXNG_SECRET 就地替换它。
+# ==============================================================================
+use_default_settings:
+  # ★ 从默认引擎集里**只保留**下列引擎（其余全部移除）。
+  #   这样不可达引擎不会再来拖慢搜索（每个超时可达 6s，5 个即 30s）。
+  engines:
+    keep_only:
+      - baidu
+      - bing
+      - sogou
+      - quark
+      - mojeek
+
+# 显式启用（防止被上游默认置为 disabled）
+engines:
+  - name: baidu
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: sogou
+    disabled: false
+  - name: quark
+    disabled: false
+  - name: mojeek
+    disabled: false
+
+general:
+  instance_name: "WeKnora SearXNG"
+  privacypolicy_url: false
+  donation_url: false
+  contact_url: false
+  enable_metrics: false
+
+server:
+  secret_key: "ultrasecretkey"
+  base_url: false
+  image_proxy: true
+  http_protocol_version: "1.0"
+  method: "GET"
+  # 关闭限流：WeKnora 后端要直接调 /search，不应被 IP 频控拦下。
+  limiter: false
+  public_instance: false
+
+ui:
+  static_use_hash: true
+  default_locale: ""
+  query_in_title: false
+  infinite_scroll: false
+  center_alignment: false
+  theme_args:
+    simple_style: auto
+  search_on_category_select: true
+  hotkeys: default
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "auto"
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 10.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true

@@ -72,7 +72,12 @@ readonly HEALTH_TIMEOUT=420                     # 健康检查最长等待（秒
 #   env_file 全部保持原语义，无需改任何相对路径。顺序也不能反。
 readonly COMPOSE_BASE_REL="docker-compose.yml"
 readonly COMPOSE_OVERLAY_REL="my-docker/docker-compose.overlay.yml"
-readonly DC="docker compose --project-directory $REMOTE_DIR --env-file $REMOTE_DIR/.env -f $REMOTE_DIR/$COMPOSE_BASE_REL -f $REMOTE_DIR/$COMPOSE_OVERLAY_REL"
+# ★ 必须带 --profile searxng，否则 compose **不会**创建/启动 searxng 与
+#   searxng-init —— 它们在官方基底里是 `profiles: [searxng, full]` 门控的。
+#   加在 $DC 这一处即可覆盖全部子命令（up / build / pull / down / restart / logs …）。
+#   注意：`$DC up -d <显式服务名>` 与 `$DC restart <服务>` 不受 profile 影响（显式指定即生效）；
+#   受影响的是**不带服务名**的 up / down / ps 之类 —— 它们从此把 searxng 一并纳入。
+readonly DC="docker compose --project-directory $REMOTE_DIR --env-file $REMOTE_DIR/.env --profile searxng -f $REMOTE_DIR/$COMPOSE_BASE_REL -f $REMOTE_DIR/$COMPOSE_OVERLAY_REL"
 
 # 颜色
 readonly C_OK=$'\033[0;32m'; readonly C_ERR=$'\033[0;31m'
@@ -504,6 +509,16 @@ echo "  启动前端与接入层..."
 # 前端容器只绑回环，对外入口（443 / 41200 / 41280）全部由 nginx 提供。
 $DC up -d frontend frontend-wkj nginx
 
+# ── 自带搜索（searxng）────────────────────────────────────────────────
+# 官方基底里 searxng / searxng-init 是 `profiles: [searxng, full]` 门控的，
+# 靠 $DC 上的 `--profile searxng` 才纳入本容器组。
+# ★ 为什么必须**显式点名**启动：不带服务名的 up 不会创建 profile 门控服务，
+#   而这里前面两条 up 都是显式点名，漏掉它就会「编排里写了、实际没起」。
+# ★ 依赖由 compose 自动满足：searxng 的 depends_on 是
+#   searxng-init(completed_successfully) —— 它先把 settings.yml 模板拷进命名卷。
+echo "  启动自带搜索（searxng）..."
+$DC up -d searxng
+
 echo ""
 $DC ps --format 'table {{.Name}}\t{{.Status}}'
 REMOTE_UP
@@ -555,6 +570,34 @@ health_check() {
     log  "  启动：ssh $SSH_HOST 'cd $REMOTE_DIR && $DC up -d nginx'"
   fi
 
+  # 自带搜索（searxng）：profile 门控组件，最容易被「编排里写了但没起」蒙过去
+  local sx_state sx_code sx_n
+  sx_state=$(ssh "$SSH_HOST" "docker inspect WeKnora-searxng --format '{{.State.Status}}'" 2>/dev/null || echo "missing")
+  if [ "$sx_state" = "running" ]; then
+    # 走宿主回环端口（overlay 默认 41291，只绑 127.0.0.1）。
+    # 带 UA：searxng 的 botdetection 对空 UA 可能直接拒绝。
+    # ★ 不要写 `|| echo "000"` —— curl 的 -w 失败时**已经输出** 000，
+    #   再叠一次会得到 "000000"（本脚本实际踩过）。
+    sx_code=$(ssh "$SSH_HOST" "curl -s -o /dev/null -w '%{http_code}' --max-time 10 -A 'Mozilla/5.0' 'http://127.0.0.1:41291/search?q=weknora&format=json'" 2>/dev/null)
+    sx_code=${sx_code:-000}
+    # ★ 光有 200 不算通：searxng 在引擎全不可达时**仍返回 200，只是 results 为空**
+    #   （2026-09-22 实测：默认引擎在国内网络全挂）。判据必须是「有结果」。
+    if [ "$sx_code" = "200" ]; then
+      sx_n=$(ssh "$SSH_HOST" "docker exec weknora-nginx wget -q -O - --timeout=25 'http://searxng:8080/search?q=weknora&format=json' 2>/dev/null | grep -o '\"url\":' | wc -l" 2>/dev/null)
+      sx_n=${sx_n:-0}
+      if [ "$sx_n" -gt 0 ]; then
+        ok "自带搜索 searxng → 200，命中 ${sx_n} 条结果（容器内 http://searxng:8080）"
+      else
+        warn "searxng 返回 200 但**结果为空** ⇒ 多为引擎不可达（看：$DC logs searxng）"
+      fi
+    else
+      warn "searxng 在跑，但搜索接口返回 HTTP $sx_code（看日志：$DC logs searxng）"
+    fi
+  else
+    warn "searxng 未运行（状态 ${sx_state}）⇒ 网络搜索 Provider 不可用"
+    log  "  启动：ssh $SSH_HOST 'cd $REMOTE_DIR && $DC up -d searxng'"
+  fi
+
   printf '\n'
   printf '%s╭─────────────────────────────────────────────────────────────╮%s\n' "$C_OK" "$C_OFF"
   printf '%s│  部署完成%s                                                    │\n' "$C_OK" "$C_OFF"
@@ -562,6 +605,7 @@ health_check() {
   printf '   官方前端 : %s%s%s\n' "$C_INFO" "$url_fe" "$C_OFF"
   printf '   定制前端 : %s%s%s\n' "$C_INFO" "$url_wkj" "$C_OFF"
   printf '   后端 API : %s%s%s\n' "$C_INFO" "$url_app" "$C_OFF"
+  printf '   自带搜索 : %s%s%s\n' "$C_INFO" "searxng（Provider 填 http://searxng:8080）" "$C_OFF"
   printf '   部署目录 : 111:%s\n' "$REMOTE_DIR"
   printf '   部署分支 : %s%s%s\n' "$C_INFO" "$BRANCH" "$C_OFF"
   printf '   查看日志 : %s%s logs%s\n' "$C_INFO" "$0" "$C_OFF"

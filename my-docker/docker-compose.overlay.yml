@@ -248,3 +248,17 @@ services:
       - "${SEARXNG_BIND:-127.0.0.1}:${SEARXNG_PORT:-41291}:8080"
     environment:
       - SEARXNG_BASE_URL=http://localhost:${SEARXNG_PORT:-41291}/
+
+  # searxng-init：把「模板 settings.yml 的来源」换成我们自己的那一份。
+  # ★ 为什么必须换（2026-09-22 实测）：官方模板启用上游全部默认引擎，而 111 在国内
+  #   网络下这些引擎**全部不可达**（brave / duckduckgo / google cse / wikidata /
+  #   wikipedia）⇒ 搜索返回 **0 条结果**，但 HTTP 仍是 200 —— 静默失效，看状态码会误判。
+  #   我们的版本用 use_default_settings.engines.keep_only 只保留国内可达引擎
+  #   （baidu / bing / sogou / quark / mojeek，实测均 200）。
+  # ★ 用 `!override` 而非追加：volumes 是序列字段，默认**追加**会导致
+  #   `/etc/searxng` 同时有官方与我们的两个源 —— 必须整体替换。
+  # ★ 官方 docker/searxng/settings.yml **保持原样**（AGENTS.md 第 1 条）。
+  searxng-init:
+    volumes: !override
+      - ./my-docker/searxng/settings.yml:/template/settings.yml:ro
+      - searxng_config:/etc/searxng
