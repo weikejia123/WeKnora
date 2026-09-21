@@ -36,10 +36,25 @@ use_default_settings:
 
 # 显式启用 + 权重。
 # weight 参与 searxng 的结果排序（值越大越靠前；未写时默认 1.0）。
+#
+# ★ 实测（2026-09-22，111 直连各引擎搜索页，curl **-L** 跟随重定向）：
+#     bing (cn.bing.com)  HTTP 200 · 99KB · 9 个 `b_algo` 结果块   ⇒ 可用
+#     sogou               HTTP 200 · 996KB · 66 个结果块           ⇒ 可用（老魏明确不用）
+#     baidu               HTTP 200 · 1.4KB · title「百度安全验证」 ⇒ **反爬拦截，拿不到结果**
+#     quark               HTTP 200 · 1.3KB · 无 title              ⇒ **反爬/空页**
+#   ⇒ 当前网络下**只有 bing 能稳定出结果**；baidu / quark 的配置保留，
+#     但实际抓不到数据（每次搜索会白跑一次请求，不影响 bing 的结果返回）。
 engines:
   - name: bing
     disabled: false
-    weight: 2.0     # 最高优先
+    weight: 2.0
+    # ★ 必须显式指定 base_url：默认的 www.bing.com 在本网络不可用。
+    #   官方 settings.yml 的 bing 段注释给的也是同一建议
+    #   （`# base_url: https://cn.bing.com  # for instances hosted in China`）。
+    base_url: https://cn.bing.com
+    # 显式声明类别：官方默认定义里 bing **没有 categories 键**，
+    # 不补这一行它不会进入普通（general）搜索。
+    categories: [general]
   - name: quark
     disabled: false
     weight: 1.0
