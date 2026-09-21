@@ -659,10 +659,16 @@ mkdir -p .build
 ( cd "$DIR/my-docker" && docker build -t "$IMG" -f Dockerfile.app-builder . )
 
 # 依赖缓存用命名卷（不由 compose 管 ⇒ `down -v` 不会误删）
+# ★ 三个缓存卷都必需，缺一个就退化成"每次全量重编译"：
+#   go-mod          = 依赖源码（否则每次重新下载 modules）
+#   go-build-cache  = Go 的编译产物缓存（默认在容器层 `/root/.cache/go-build`，
+#                     而本容器是 --rm ⇒ 不挂出来就每次全量重编所有包）
+#   cargo-registry  = Rust crates（anydoc 静态库的依赖）
 docker run --rm \
   -v "$DIR":/src \
   -v "$DIR/.build":/out \
   -v weknora-go-mod:/go/pkg/mod \
+  -v weknora-go-build-cache:/root/.cache/go-build \
   -v weknora-cargo-registry:/usr/local/cargo/registry \
   -w /src \
   -e VERSION="$V" -e COMMIT_ID="$C" -e BUILD_TIME="$T" -e GO_VERSION="$G" \
