@@ -1,0 +1,52 @@
+# ==============================================================================
+# WeKnora app 编译镜像（仅用于在 111 上产出后端二进制）
+#
+# 为什么需要它
+#   把 app 的二进制改由映射目录提供后，日常改后端只需「编译 → 替换 → restart」，
+#   不必每次 docker build 整个镜像（省掉 final 阶段、镜像 commit、容器重建）。
+#
+# ★ 为什么不能在 111 宿主上编译（已实测）
+#   宿主 Ubuntu 24.04 是 glibc **2.39**，而 backend final 镜像是
+#   debian:12.12-slim（glibc **2.36**）；cgo 二进制与 glibc **强绑定**
+#   ⇒ 宿主产物在容器里报 `GLIBC_2.38 not found` / `GLIBCXX_3.4.32 not found`，起不来。
+#   本镜像与 final 镜像**同为 Debian 12** ⇒ 产物只需求 GLIBC_2.34 / GLIBCXX_3.4.30，可用。
+#
+# 实测（2026-09-21，复用 go module 缓存）
+#   编译耗时 **68 秒**，产物 259M。（对照：全量 `docker build` 为 7~16 分钟。）
+#
+# 构造参数（国内网络必需，在 compose 里对应给出）
+#   APT_MIRROR / RUSTUP_DIST_SERVER / RUSTUP_UPDATE_ROOT / CARGO_REGISTRY
+# ==============================================================================
+FROM golang:1.26-bookworm
+
+# 国内 apt 源。注意只替换**带 scheme 的 base**、不含路径 —— 与 docker/Dockerfile.app
+# 同一处理（写成 mirrors.tencent.com/debian 会拼成 /debian/debian 而 404）。
+ARG APT_MIRROR=mirrors.tencent.com
+RUN sed -i "s@deb.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list.d/debian.sources
+
+# cgo 依赖 + git。
+#   ★ git 是**必需**的：Go 默认要把 VCS 信息嵌进二进制，缺 git 会直接
+#     `error obtaining VCS status: exit status 128` 而编译失败。
+#   ★ 另需 `git config --global --add safe.directory <src>` —— 挂载进来的源码目录
+#     属主与容器内用户不同时会触发 dubious ownership（由调用脚本负责设置）。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libsqlite3-dev git build-essential ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Rust 工具链 —— anydoc（进程内文档解析）需要，官方 Dockerfile 的 builder 阶段同理。
+# 配置与 docker/Dockerfile.app 保持一致（含国内源）。
+ARG RUSTUP_DIST_SERVER=https://rsproxy.cn
+ARG RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup
+ARG CARGO_REGISTRY=https://rsproxy.cn/index/
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:$PATH
+RUN export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER" \
+           RUSTUP_UPDATE_ROOT="$RUSTUP_UPDATE_ROOT" \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+         | sh -s -- -y --profile minimal --default-toolchain stable \
+    && printf '[source.crates-io]\nreplace-with = "mirror"\n[source.mirror]\nregistry = "%s"\n' \
+         "$CARGO_REGISTRY" >> "$CARGO_HOME/config.toml"
+
+# Go 依赖走国内代理（111 不可达 proxy.golang.org）
+ENV GOPROXY=https://goproxy.cn,direct \
+    GOSUMDB=off

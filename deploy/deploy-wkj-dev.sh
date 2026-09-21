@@ -17,6 +17,7 @@
 #   ./deploy-wkj-dev.sh up          只按当前编排重建容器（不 pull / 不 build）—— 改编排后用它生效
 #   ./deploy-wkj-dev.sh push-ui     构建前端并投递到 111（**无需重启**，立即可见）
 #   ./deploy-wkj-dev.sh push-reader 同步代码并重启 docreader（Python 免编译，秒级）
+#   ./deploy-wkj-dev.sh push-app    编译 app 并投递到 111（编译镜像；约 1 分钟，不重建容器）
 #   ./deploy-wkj-dev.sh build       二开构建：在 111 上构建镜像后重启
 #   ./deploy-wkj-dev.sh status      查看容器状态
 #   ./deploy-wkj-dev.sh logs [svc]  查看日志（默认 app）
@@ -604,6 +605,67 @@ cmd_push_reader() {
   ssh "$SSH_HOST" "$DC restart docreader"
   ok "已重启 docreader（秒级）"
 }
+
+cmd_push_app() {
+  # 编译 app 并投递到映射目录，然后重启 —— 不重建镜像、不重建容器。
+  #
+  # ★ 为什么用「编译镜像」而不是 docker build 全流程：
+  #   现有 build 要走 browserskill + builder + final + 镜像 commit + 容器重建；
+  #   这里只需 builder 那一步的内容，产物直接落映射目录。
+  #   实测：编译 **68 秒**（对照全量 build 的 7~16 分钟）。
+  #
+  # ★ 为什么不在 111 宿主上编译：
+  #   宿主 Ubuntu 24.04 是 glibc 2.39，容器是 debian:12.12-slim（2.36）；
+  #   cgo 二进制与 glibc 强绑定 ⇒ 宿主产物在容器里 `GLIBC_2.38 not found`（已实测）。
+  #   编译镜像与 final 镜像同为 Debian 12 ⇒ 产物需求 GLIBC_2.34，可用。
+  local img="weknora-app-builder:wkj"
+  preflight_local
+  sync_code
+
+  step "① 在 111 上编译 app（编译镜像，与 final 镜像同 glibc 基线）"
+  ssh "$SSH_HOST" \
+      "DIR='$REMOTE_DIR' IMG='$img' \
+       V='$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || echo unknown)' \
+       C='$(git -C "$REPO_ROOT" rev-parse --short=8 HEAD)' \
+       T='$(date -u +%Y-%m-%dT%H:%M:%SZ)' \
+       G='go1.26.8' bash -s" <<'REMOTE_APP_BUILD'
+set -e
+cd "$DIR"
+mkdir -p .build
+
+# 编译镜像仅首次构建（含 Rust 工具链，耗时较长）；之后复用
+if ! docker image inspect "$IMG" >/dev/null 2>&1; then
+  echo "  编译镜像不存在 → 先构建（仅首次，含 Rust）..."
+  docker build -f my-docker/Dockerfile.app-builder -t "$IMG" .
+fi
+
+# 依赖缓存用命名卷（不由 compose 管 ⇒ `down -v` 不会误删）
+docker run --rm \
+  -v "$DIR":/src \
+  -v "$DIR/.build":/out \
+  -v weknora-go-mod:/go/pkg/mod \
+  -v weknora-cargo-registry:/usr/local/cargo/registry \
+  -w /src \
+  -e VERSION="$V" -e COMMIT_ID="$C" -e BUILD_TIME="$T" -e GO_VERSION="$G" \
+  "$IMG" \
+  bash -c 'git config --global --add safe.directory /src && \
+           make build-prod GO_BUILD_TAGS=anydoc BINARY_NAME=/out/WeKnora'
+
+ls -lh "$DIR/.build/WeKnora"
+echo "  ★ GLIBC 需求（容器上限 2.36）:"
+grep -aoE "GLIBC_[0-9]+\.[0-9]+" "$DIR/.build/WeKnora" | sort -uV | tail -3 | sed 's/^/    /'
+REMOTE_APP_BUILD
+  ok "已编译并投递到 .build/WeKnora"
+
+  step "② 重启 app（加载新二进制；不会重建容器）"
+  ssh "$SSH_HOST" "$DC restart app"
+  ok "已重启 app"
+
+  step "③ 自证：容器内二进制的 commit"
+  printf "  期望 commit: %s\n" "$(git -C "$REPO_ROOT" rev-parse --short=8 HEAD)"
+  ssh "$SSH_HOST" "docker exec WeKnora-app grep -ac '$(git -C "$REPO_ROOT" rev-parse --short=8 HEAD)' /app/WeKnora" \
+    | sed 's/^/  实际命中: /'
+}
 cmd_build()  { preflight_local; sync_code; ensure_env; compose_up build; health_check; }
 
 cmd_status() {
@@ -687,6 +749,7 @@ case "${1:-help}" in
   deploy|update|build|sync|up|status|restart|health|down|shell) "cmd_$1" "${@:2}" ;;
   push-ui)      cmd_push_ui ;;
   push-reader)  cmd_push_reader ;;
+  push-app)     cmd_push_app ;;
   logs)         cmd_logs "${2:-app}" ;;
   compose-diff) cmd_compose_diff ;;
   help|-h|--help) cmd_help ;;
