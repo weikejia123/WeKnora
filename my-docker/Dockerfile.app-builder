@@ -37,7 +37,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 配置与 docker/Dockerfile.app 保持一致（含国内源）。
 ARG RUSTUP_DIST_SERVER=https://rsproxy.cn
 ARG RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup
-ARG CARGO_REGISTRY=https://rsproxy.cn/index/
+# ★ registry 必须带 `sparse+` 前缀 —— cargo 的 sparse 协议要求。
+#   漏了前缀会 404：`failed to fetch https://rsproxy.cn/index/ (unexpected http status code: 404)`。
+#   取值与 my-docker/docker-compose.overlay.yml 里 CARGO_REGISTRY_ARG 的默认值保持一致。
+ARG CARGO_REGISTRY=sparse+https://rsproxy.cn/index/
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
 RUN export RUSTUP_DIST_SERVER="$RUSTUP_DIST_SERVER" \

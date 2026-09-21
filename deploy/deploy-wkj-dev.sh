@@ -633,11 +633,12 @@ set -e
 cd "$DIR"
 mkdir -p .build
 
-# 编译镜像仅首次构建（含 Rust 工具链，耗时较长）；之后复用
-if ! docker image inspect "$IMG" >/dev/null 2>&1; then
-  echo "  编译镜像不存在 → 先构建（仅首次，含 Rust）..."
-  docker build -f my-docker/Dockerfile.app-builder -t "$IMG" .
-fi
+# 编译镜像：**每次都 build**（Dockerfile 改了就应重建，而层缓存会让它很快）。
+# ★ 早先写成「镜像存在就跳过」，会导致改了 Dockerfile 却不重建、继续用旧镜像 ——
+#   典型的静默失效（本次就因为漏了 `sparse+` 前缀而踩到）。
+# ★ context 用 my-docker/（而非仓库根）—— 本 Dockerfile 不 COPY 任何文件，
+#   没必要把整个仓库发给 BuildKit；cd 进去还能消除 -f 路径的相对基准歧义。
+( cd "$DIR/my-docker" && docker build -t "$IMG" -f Dockerfile.app-builder . )
 
 # 依赖缓存用命名卷（不由 compose 管 ⇒ `down -v` 不会误删）
 docker run --rm \
