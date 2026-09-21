@@ -519,6 +519,18 @@ $DC up -d frontend frontend-wkj nginx
 echo "  启动自带搜索（searxng）..."
 $DC up -d searxng
 
+# ★ 关键：settings.yml 由 searxng-init（oneshot）投递到命名卷，而 searxng **只在进程
+#   启动时**读 /etc/searxng/settings.yml ⇒ 若 init 刚被重建、searxng 却没跟着重启，
+#   新配置**根本不会生效**（2026-09-22 实测踩到：卷里已是新文件，搜索仍按旧引擎清单跑，
+#   表现为"改了配置毫无变化"）。compose 不会因为 oneshot 依赖被重建而重启下游服务。
+#   判据：直接比较两个容器的 ISO 时间戳（同格式 ⇒ 字符串比较即可）。
+_sx_init_t=$(docker inspect WeKnora-searxng-init --format '{{.Created}}' 2>/dev/null || true)
+_sx_run_t=$(docker inspect WeKnora-searxng --format '{{.State.StartedAt}}' 2>/dev/null || true)
+if [ -n "$_sx_init_t" ] && [ -n "$_sx_run_t" ] && [[ "$_sx_init_t" > "$_sx_run_t" ]]; then
+  echo "  searxng-init 比 searxng 新 ⇒ 重启 searxng 让新 settings.yml 生效"
+  $DC restart searxng >/dev/null
+fi
+
 echo ""
 $DC ps --format 'table {{.Name}}\t{{.Status}}'
 REMOTE_UP
