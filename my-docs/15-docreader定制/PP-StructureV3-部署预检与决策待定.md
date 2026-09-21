@@ -1,7 +1,13 @@
 # PP-StructureV3 部署预检与决策待定（南宁 110）
 
 > 日期：2026-09-22 · 目标：在 110 部署 PP-StructureV3 容器，供 WeKnora 解析扫描件 PDF
-> **状态：预检完成，因发现规约冲突而暂停，待老魏决策**（依据 pp-ocr-v6 项目 `AGENTS.md` 的要求）
+>
+> **状态：已决策，部署进行中**。老魏 2026-09-22 决策：**单独部署一个容器** +
+> **释放 Ollama 占卡模型与 `pp-ocr-v6-gpu` 的 GPU 占用** + **独立目录 / 独立 git（本地）**。
+>
+> ★ **实施记录已迁至 110 上的独立仓库**：`/opt/docker-deploy/pp-structure-v3/`
+> （含 `AGENTS.md` 规约、`my-docs/20-设计/`、`my-docs/30-实施/`）。
+> 本文档保留**决策依据与预检数据**，作为 WeKnora 侧的接入背景。
 
 ---
 
@@ -114,3 +120,46 @@ PP-StructureV3 面向「WeKnora 的文档解析后端」。混放会导致 pp-oc
 1. 建目录与骨架 → 2. 写 Dockerfile 并构建 → 3. 写服务与脚本 →
 4. 按决策 2 腾显存 → 5. 起容器 → 6. 验证（健康检查 + 一页推理 + 峰值显存）→
 7. 配 WeKnora（解析引擎填端点）→ 8. 落实施文档
+
+---
+
+## 六、决策结果与执行进展（2026-09-22）
+
+### 6.1 决策
+
+| 决策项 | 老魏决定 |
+|---|---|
+| 部署位置 | **单独一个容器** + **独立目录** |
+| 显存 | **释放** Ollama 占卡模型与 `pp-ocr-v6-gpu` |
+| 归档 | **独立 git（本地）** |
+
+⇒ 与 §二 的规约冲突**就此消解**：PP-StructureV3 **不进** `pp-ocr-v6` 项目目录，
+故**不需要修改其 `AGENTS.md`**。
+
+### 6.2 已完成
+
+| 步骤 | 结果 |
+|---|---|
+| 显存释放 | 停 `pp-ocr-v6-gpu-api`（+2.6GB）→ 卸 Ollama 的 `qwen3-embedding:4b`（+4.3GB）⇒ 空闲 **4877 → 11763 MiB** |
+| 目录 | `/opt/docker-deploy/pp-structure-v3/`（软链自 `/mnt/docker-data/docker-deploy/`） |
+| 仓库 | `git init` 完成，首次提交 `6dd3439` |
+| 骨架 | `AGENTS.md`（规约）/ `Dockerfile` / `compose.yaml` / `server/` / `my-scripts/` / `my-docs/{10,20,30,40}` |
+| 服务设计 | `my-docs/20-设计/01-服务设计.md`（契约 + 裁剪决策 + 两处参数冲突）→ 提交 `22cf4a2` |
+| 服务代码 | `server/main.py` + 代码外置挂载 → 提交 `64855c7` |
+| 镜像 | 构建中（`FROM pp-ocr-v6-gpu:20260922` + `paddlex[ocr]==3.7.2`） |
+
+### 6.3 关键设计结论（供 WeKnora 侧知悉）
+
+1. **WeKnora 侧零代码**：本服务契约复刻 PaddleX 官方 `POST /layout-parsing`，
+   响应为 `result.layoutParsingResults[].markdown.{text,images}`
+   —— 正是 `paddleocr_vl` 引擎读取的字段。
+2. **两处参数语义冲突，服务端为准**（已记入该仓库设计文档）：
+   - `useSealRecognition`：WeKnora 发 `true`，服务端关（显存约束）
+   - `useDocOrientationClassify` / `useDocUnwarping`：WeKnora 发 `false`，服务端开（扫描件需要）
+3. **`markdownIgnoreLabels` 的补偿**：服务端改为按产线 `block_label` 剔除
+   页眉/页脚/页码 —— 这是版面检测独有的能力（此前只能靠正则猜）。
+
+### 6.4 待完成
+
+镜像构建 → 探针确认产线输出结构 + 记录峰值显存/单页耗时 → 写服务适配层收尾 →
+起容器验证 → 配 WeKnora 端点 → 真实入库验证。
