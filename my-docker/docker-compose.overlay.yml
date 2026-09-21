@@ -163,13 +163,16 @@ services:
 
   # ───────────────────────────────────────────── 后端：构建期站点适配（国内网络）
   app:
-    # ── 应用代码外置（2026-09-21）：主二进制改由宿主目录提供
-    # 产出方式：用 my-docker/Dockerfile.app-builder 这个**编译镜像**编译
-    #   （与 final 镜像同为 Debian 12 ⇒ glibc 一致；实测 68 秒出产物），
-    #   再由 `deploy-wkj-dev.sh push-app` 投递到 .build/WeKnora。
-    # ★ 单文件挂载要求宿主文件**已存在** —— 否则 Docker 会创建同名**目录**，
-    #   容器 ENTRYPOINT 直接失败。首次启用前必须先填充 .build/WeKnora。
-    # ★ 与官方既有的三条挂载（data-files / docreader-tmp / config.yaml）是**追加**关系。
+  # ── 应用代码外置（2026-09-22 上线）：主二进制改由宿主目录提供
+  # 产出方式：用 my-docker/Dockerfile.app-builder 这个**编译镜像**编译
+  #   （与 final 镜像同为 Debian 12 ⇒ glibc 一致；实测产物 GLIBC 需求 ≤2.35，
+  #     容器上限 2.36），再由 `deploy-wkj-dev.sh push-app` 投递到 .build/WeKnora
+  #   并重启 app。
+  #   实测：首次全链路 2m02s（含 Rust anydoc 全编译）；稳态缓存命中 **15.7s**。
+  # ★ 单文件挂载要求宿主文件**已存在** —— 否则 Docker 会创建同名**目录**，
+  #   容器 ENTRYPOINT 直接失败。故首次启用的顺序是「**先** push-app 产出、
+  #   **再** up -d app」；push-app 已内置挂载检测，会自动改走重建。
+  # ★ 与官方既有的三条挂载（data-files / docreader-tmp / config.yaml）是**追加**关系。
     volumes:
       - ./.build/WeKnora:/app/WeKnora:ro
     build:

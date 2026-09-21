@@ -11,8 +11,17 @@
 #   ⇒ 宿主产物在容器里报 `GLIBC_2.38 not found` / `GLIBCXX_3.4.32 not found`，起不来。
 #   本镜像与 final 镜像**同为 Debian 12** ⇒ 产物只需求 GLIBC_2.34 / GLIBCXX_3.4.30，可用。
 #
-# 实测（2026-09-21，复用 go module 缓存）
-#   编译耗时 **68 秒**，产物 259M。（对照：全量 `docker build` 为 7~16 分钟。）
+# 实测（2026-09-22，111）
+#   首次全链路 **2m02s**（其中 Rust anydoc 静态库 45.9s + Go 全量编译），
+#   产物 **267M**、GLIBC 需求 ≤2.35（容器上限 2.36）；
+#   稳态（Go build cache + cargo target 命中）**15.7s**。
+#   ⇒ 提速的关键是三个缓存卷（go-mod / go-build-cache / cargo-registry），
+#     见 deploy/deploy-wkj-dev.sh 的 push-app —— 缺 go-build-cache 会退化为每次全量重编。
+#
+# ★ 本镜像只提供**工具链**，不产出 anydoc 静态库：
+#   链接 -lanydoc_go 需要 `scripts/build-anydoc-lib.sh` 先在容器内跑一遍
+#   （官方 Dockerfile.app 的 builder 阶段是「先产库、再 GO_BUILD_TAGS=anydoc」两步）。
+#   push-app 已按同一顺序调用，勿把两步拆开。
 #
 # 构造参数（国内网络必需，在 compose 里对应给出）
 #   APT_MIRROR / RUSTUP_DIST_SERVER / RUSTUP_UPDATE_ROOT / CARGO_REGISTRY
