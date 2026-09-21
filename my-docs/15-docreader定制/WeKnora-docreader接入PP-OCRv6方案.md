@@ -23,8 +23,12 @@
 
 ```python
 md = MarkItDown()
-md.register_converter(".pdf", PPOCRConverter(...))   # 直接挂，不走插件发现
+md.register_converter(PPOCRConverter(...), priority=-1.0)   # 直接挂，不走插件发现
 ```
+
+> 注意签名（0.1.3 实测）：**只有 converter 一个位置参数 + keyword-only `priority`**，
+> 没有「按扩展名注册」那种写法 —— 扩展名匹配由 converter 自己的 `accepts()` 负责。
+> `priority=-1.0` 抢在内置 PDF 转换器前面。
 
 ⇒ **功能等价**，但**免装包、免重建镜像**，配合「docreader 代码外置」可秒级生效。
 
@@ -85,14 +89,24 @@ my-docreader/ppocr_converter.py   →    /app/docreader_ext/ppocr_converter.py
 
 ## 三、配置设计（环境变量）
 
-| 变量 | 建议默认 | 说明 |
+下表是**代码里的默认值**（与 `my-docreader/ppocr_converter.py` 顶部常量一一对应）。
+overlay 目前只显式注入前四个中的三个；其余用默认值，需要时在
+`my-docker/docker-compose.overlay.yml` 的 `docreader.environment` 里追加即可。
+
+| 变量 | 默认 | 说明 |
 |---|---|---|
-| `PPOCR_BASE_URL` | `http://10.168.1.110:36741` | 110 的 PP-OCRv6 服务 |
-| `PPOCR_TIERS` | `medium` | 档位（`tiny` / `small` / `medium`） |
+| `PPOCR_BASE_URL` | `http://10.168.1.110:36741` | 110 的 PP-OCRv6 服务（overlay 已注入） |
+| `PPOCR_TIERS` | `medium` | 档位（`tiny` / `small` / `medium`，overlay 已注入） |
+| `PPOCR_FALLBACK` | `true` | 连不上 110 时回落到内置 PDF 转换器（overlay 已注入） |
 | `PPOCR_TIMEOUT_SECONDS` | `60` | 单页请求超时 |
-| `PPOCR_RENDER_DPI` | `150` | 页图渲染 DPI（见 §五.④） |
-| `PPOCR_MAX_EDGE` | `2048` | 页图长边上限（110 限制 ≤4096） |
-| `PPOCR_FALLBACK` | `true` | 连不上 110 时回落到内置 PDF 转换器 |
+| `PPOCR_RENDER_DPI` | `200` | 页图渲染 DPI —— **与 docreader builtin 同口径，勿调低**（见 §五.⑥） |
+| `PPOCR_MAX_EDGE` | `2000` | 页图长边上限 —— 同上口径（110 限制 ≤4096） |
+| `PPOCR_JPEG_QUALITY` | `85` | 同上口径 |
+| `PPOCR_MAX_RETRIES` | `3` | 429 退避重试次数（按 `Retry-After`） |
+| `PPOCR_MAX_PAGES` | `0` | 处理页数上限，`0` = 不限（大 PDF 防超时） |
+| **`PPOCR_SCAN_ONLY`** | `true` | **只接管扫描件 PDF**（判据见 §五.⑦）；置 `false` 则接管全部 `pdf` |
+| **`PPOCR_SCAN_MIN_CHARS`** | `10` | 「该页无文本层」的字符阈值（同 builtin 的 `DOCREADER_PDF_SCAN_MIN_CHARS`） |
+| **`PPOCR_SCAN_PAGE_RATIO`** | `0.5` | 无文本层页占比达此值 ⇒ 整份判为扫描件 |
 
 > 走 overlay 的环境变量即可，**不需要**接 WeKnora 的 `parser_engine_overrides`
 > （那条链路要改 Go 侧 `tenant.go` + `parser_url_security.go`，与「少改官方文件」相悖）。
@@ -306,11 +320,20 @@ class PPOCRConverter(DocumentConverter):
 
 ---
 
-## 五、五个必须注意的点
+## 五、必须注意的点
 
 **① 不选 markitdown，这条路就不会被走到**
 扫描件 PDF 默认走 `builtin`（docreader 的 `PDFParser` 拆页 + **Go 侧 VLM OCR**）。
 必须在**知识库 → 解析设置**里把 `pdf` 显式改成 `markitdown`。**这是最容易漏的一步。**
+
+> 容易产生的误解：「我们改的不是 docreader 吗？跟 markitdown 有什么关系？」
+> —— docreader 是**多引擎容器**，内置 `builtin` / `markitdown` / `opendataloader` 三个**引擎槽位**
+> （`docreader/parser/registry.py:159-206`），每个槽位对同一文件类型挂不同的 parser 类。
+> `pdf` 在 builtin 下是 `PDFParser`（**我们没动**），在 markitdown 下才是
+> `MarkitdownParser` → 内部 `StdMarkitdownParser`（**我们改的就是这个**）。
+> 引擎由**请求参数**决定（`parser.py:52,66` ← Go 侧 ← KB 解析设置）⇒
+> 「改了 docreader 的文件」与「要在 KB 里选 markitdown」并不矛盾：
+> 改的是那个槽位，不选它就走不到它。
 
 **② markitdown 被锁在 0.1.3，写代码前先实测 API**
 `uv.lock` 里实际版本是 **`0.1.3`**，不是最新（0.1.6）。
@@ -350,6 +373,21 @@ Go 侧 `docreader_call_timeout`。**大 PDF 有超时风险**，需按实际文�
 
 **对策**：开 `include_boxes=true` 做二维重组（可执行判据见 §4.6 末）。
 若某批文档**结构比字准更重要**，那批仍走 `builtin` —— 引擎规则按库分开建即可。
+
+**⑦ 接管范围：只认扫描件（`accepts()` 判据）**
+原实现只判扩展名 ⇒ **KB 一旦选了 markitdown，该库全部 PDF 都会被送进 OCR**。
+已修正为：文本层有效字符 < `PPOCR_SCAN_MIN_CHARS` 的页，占比 ≥ `PPOCR_SCAN_PAGE_RATIO`
+时整份判为扫描件并接管；否则**返回 `False` 交回内置转换器**。
+判据失效（异常）时同样交回内置 —— 本方案定位是**补足扫描件**，不是接管全部 PDF 处理。
+
+实测对照（同一份审计报告的电子版 / 扫描版，各 38 页 —— 天然的对照组）：
+
+| 样本 | 无文本层页 | `accepts()` | 走哪条 |
+|---|---|---|---|
+| 电子版 | 0 / 38 | `False` | 内置转换器抽文本层（毫秒级） |
+| 扫描版 | 38 / 38 | `True` | 我们接管 → PP-OCRv6 |
+
+⇒ 所以「KB 里把 pdf 改成 markitdown」**不会**让带文本层的 PDF 变慢或变糙。
 
 ---
 

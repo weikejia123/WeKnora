@@ -83,7 +83,10 @@ const CONFIGURABLE_ENGINES = new Set(['mineru', 'mineru_cloud', 'paddleocr_vl', 
 WeKnora 侧**四重证据**（可复现）：
 
 1. `docreader/pyproject.toml` 只声明 `markitdown[docx,pdf,xls,xlsx,pptx]` —— **无 `az-*` extra**；
-2. `docreader/parser/markitdown_parser.py` 是 **`MarkItDown()` 无参构造**；
+2. `docreader/parser/markitdown_parser.py` **原本**是 `MarkItDown()` 无参构造
+   —— ★ 2026-09-22 本项目已在其后追加 `register_converter(...)` 注册**自研** converter
+   （见 `my-docs/15-docreader定制/`）。但那与本节讨论的 **MarkItDown 自带**三条外部 OCR
+   通道无关：`enable_plugins` 至今仍未开启，本节结论不变；
 3. 同文件的 `convert()` 只传 `file_extension` / `keep_data_uris`，无任何外部服务参数；
 4. `grep -rn -i "docintel\|azure\|DocumentIntelligence" docreader/` —— **0 命中**。
 
@@ -129,7 +132,7 @@ MarkItDown 的插件系统**不能**让 WeKnora 免于改代码：
 | 做法 | 改官方文件 | 是否重建 docreader 镜像 | 自研代码落点 | OCR 实现 |
 |---|---|---|---|---|
 | 开开关 + 官方 `markitdown-ocr` | 2 处 | **要** | 无 | ❌ LLM Vision |
-| 改 markitdown + 自写 converter（用 `register_converter`） | **1 处** | 不用 | `docreader/parser/`（官方目录） | ✅ PP-OCRv6 |
+| 改 markitdown + 自写 converter（用 `register_converter`） | **1 处（仅 2 行）** | 不用 | `my-docreader/`（自研目录，挂载 + `PYTHONPATH` 注入）—— ✅ **2026-09-22 已实施** | ✅ PP-OCRv6 |
 | OpenAI 适配壳（§8.3） | **0** | 不用 | 110 的 pp-ocr 项目 | ✅ PP-OCRv6 |
 
 ---
