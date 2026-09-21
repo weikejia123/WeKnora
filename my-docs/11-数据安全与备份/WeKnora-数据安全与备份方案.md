@@ -16,6 +16,7 @@
 | 有没有"增量但危险"的操作要防？ | **有**：建索引会锁表 | `CREATE INDEX` **246 处不带 `CONCURRENTLY`**，涉及 `embeddings`/`chunks`/`knowledges` 等大表 |
 | 备份用增量还是全量？ | **全量**（已定） | 磁盘空间富裕恰恰是"不需要增量"的理由（§3.3） |
 | 最终采用什么方案？ | 全量 · **每天 06:00** · 本地专属目录 · **保留 10 份** | §3.5 |
+| 落地了吗？ | ✅ **已上线**（2026-09-21 23:29 首次备份成功，6 秒 / 3.3M）；**仅剩恢复演练未做** | §3.6.1、§4.2 |
 | 备份到同盘（`/mnt/data`）够不够？ | **够防误操作，不防硬件故障**（已明确接受） | 源与目标同在一块物理盘（§3.4） |
 | 只备份数据库够不够？ | **不够** | `.env` 里的 `SYSTEM_AES_KEY` 丢失会让库内加密字段**静默失效**（§1.2） |
 
@@ -233,25 +234,21 @@ if plain, ok := utils.DecryptStoredSecretLenient(p.APIKey); ok {
 - **保留 10 份** ⇒ 可回退窗口是**最近 10 天**。更早的误操作无法回退。
 - **`.env` 必须进备份集**（§1.2）——否则库恢复了也解不开密文。
 
-### 3.5.1 文件卷：为什么用硬链接快照而非 tar
+### 3.5.1 文件卷：为何最终用 tar（而非硬链接快照）
 
-`data-files` 卷若每天 `tar` 一份、留 10 份，占用是「卷大小 × 10」，且每天全量压缩很慢。
-改用 **`rsync --link-dest`**：
+**原设计**用 `rsync --link-dest` 硬链接快照（为大卷优化：每份视图完整、占用接近增量）。
+**实测后放弃**，两条理由：
 
-- **每份快照都是完整的**（可直接拷出来恢复，**不是**"增量 + 累积链"）
-- 未变化的文件以**硬链接共享** ⇒ 磁盘占用接近增量
-- 只传输变化的文件 ⇒ 每天很快
+| # | 理由 | 实测依据（2026-09-21） |
+|---|---|---|
+| 1 | **数据量极小** | `data-files` 卷 **568K**、数据库 **32MB**；每天全量 ×10 份也不过数百 MB，而磁盘剩余 **14.6T** ⇒ 硬链接的复杂度换不来收益 |
+| 2 | **宿主路径不可读** | `/mnt/data/docker/volumes/` 对 ssh 用户**无权限** ⇒ 必须经容器访问；而 app 容器内**没有 `rsync`**（只有 `tar`）⇒ 宿主侧 rsync 方案直接出局 |
 
-**已实测验证**（2026-09-21，最小复现）：
+⇒ 最终用 `docker exec WeKnora-app tar czf`：简单、可靠、可校验。
 
-| 验证点 | 结果 |
-|---|---|
-| 未变化的文件在两份快照中 inode 相同 | ✅ 确认共享 |
-| 已修改 / 新增的文件在新快照中是新 inode | ✅ 确认不污染旧快照 |
-| **删除最旧一份后，其余快照的文件仍可读** | ✅ 链接数递减，其余份完好 |
-
-⇒ 轮转时 `rm -rf` 最旧一份是安全的：只释放该份独占的 inode，
-被多份共享的文件仍有其他链接指向。
+> **附**：硬链接方案的轮转安全性此前已用最小复现验证（未变文件 inode 相同、
+> 删最旧一份后其余快照仍可读、3 份/KEEP=2 的轮转正确）。该验证并非白做 ——
+> 它正是"可以安全地不用它"的判断依据。留此记录以免后人重走一遍。
 
 ### 3.6 实现与安装
 
@@ -266,10 +263,14 @@ if plain, ok := utils.DecryptStoredSecretLenient(p.APIKey); ok {
 
 | 保护 | 作用 |
 |---|---|
-| 前置检查 | 仓库 / `.env` / 卷目录 / 容器 / 空间，任一缺失即中止 ⇒ **不产生半个备份** |
+| 前置检查 | 仓库 / `.env` / **容器在跑** / **卷存在** / 空间，任一缺失即中止 ⇒ **不产生半个备份** |
 | 空间预检 | 剩余 `< MIN_FREE_GB`（默认 20G）中止 ⇒ 避免写满盘 |
 | 并发锁 | `flock`，上次未跑完则跳过 ⇒ 不叠加 |
 | **dump 当场校验** | `pg_restore -l` 能读才算成功 ⇒ **未验证的备份不算备份** |
+| **tar 当场校验** | `tar tzf` 能列才算成功 |
+
+每份快照还带一个 **`meta.txt`**（迁移版本 / 代码提交 / 体积 / 恢复顺序），
+使备份**自描述** —— 恢复时不必猜"这是哪一版状态"。迁移版本尤其关键：它决定该配哪一版代码。
 
 **定时任务**（在 111 上 `crontab -e` 追加一行）：
 
@@ -278,6 +279,14 @@ if plain, ok := utils.DecryptStoredSecretLenient(p.APIKey); ok {
 ```
 
 > 脚本自己写 `backup.log`，故 cron 侧的输出丢弃即可。
+> ⚠️ 111 上已存在**其他项目的 cron 条目**（北京政策分析），安装时**必须追加而非覆盖**。
+> 幂等的追加写法（重复执行不会产生第二条）：
+>
+> ```bash
+> ( crontab -l 2>/dev/null | grep -v "backup-weknora.sh"
+>   echo "# WeKnora 数据备份（backup-weknora.sh）：每天 06:00，保留最近 10 份"
+>   echo "0 6 * * * /mnt/data/weknora/my-scripts/backup-weknora.sh >/dev/null 2>&1" ) | crontab -
+> ```
 
 **健康检查**（确认备份真的在跑，而不是静默停了）：
 
@@ -285,27 +294,61 @@ if plain, ok := utils.DecryptStoredSecretLenient(p.APIKey); ok {
 ssh nanning-111 '/mnt/data/weknora/my-scripts/backup-weknora.sh --status'
 ```
 
+### 3.6.1 安装记录（2026-09-21 23:29，已完成）
+
+| 步骤 | 结果 |
+|---|---|
+| 代码同步到 111 | 用新加的 `deploy-wkj-dev.sh sync`（**不碰容器**，故不触发迁移）→ 111 至 `3ac90e3a` |
+| dry-run 前置检查 | ✅ 通过（剩余空间 14651G） |
+| **首次真实备份** | ✅ **6 秒完成**，产物 3.3M（`db.dump` 2.8M / `data-files.tar.gz` 436K / `env.backup` 44K / `meta.txt`） |
+| cron 安装 | ✅ 追加到 111（原「北京政策分析」条目保留），`cron` 服务 `active`；重复安装幂等已验证 |
+| 快照 | `/mnt/data/backups/weknora/20260921-232928/` |
+
+**★ 同时确认了一件重要的事**：`db.dump` 里**包含** ParadeDB / pgvector 的特殊索引定义 ——
+`USING bm25`（1 条，`embeddings_search_idx`，含 `key_field` 与中文分词配置）、
+`USING hnsw`（3 条，1024/3584/798 维）、以及
+`CREATE EXTENSION IF NOT EXISTS pg_search WITH SCHEMA paradedb;`。
+⇒ **恢复时这些索引会随 dump 一起重建**，不需手工补建。
+（残余风险：恢复端须有**匹配版本**的 `pg_search` 扩展 —— 同镜像内成立，换镜像时需留意。）
+
 **恢复顺序**（缺一不可）：① 恢复 `.env` → ② 起 postgres → ③ `pg_restore` 入库 →
 ④ 解回 `data-files` → ⑤ 起 app。
 **顺序反了会出问题**：`.env` 里的密钥决定库内密文字段能否解开，而 app 启动就会读取它们。
 
 ---
 
-## 四、待验证的前提
+## 四、验证状态
 
-以下三项决定方案的具体参数，**尚未实测**（不擅自探测服务器）：
+### 4.1 已实测（2026-09-21）
 
-| # | 待验证项 | 为什么重要 | 验证命令（需授权在 111 执行） |
-|---|---|---|---|
-| 1 | **数据库与上传文件的实际体积** | 决定全量耗时与保留份数 | `docker exec WeKnora-postgres psql -U postgres -d WeKnora -c "SELECT pg_size_pretty(pg_database_size('WeKnora'))"`<br>`du -sh /mnt/data/docker/volumes/weknora_data-files` |
-| 2 | **`pg_dump` 在该镜像中的可用性与 ParadeDB 兼容性** | 镜像是 `paradedb/paradedb:v0.22.6-pg17`，非纯官方 PG；BM25/HNSW 等特殊索引的 dump/restore 行为需实测 | `docker exec WeKnora-postgres pg_dump --version`<br>小库上做一次 dump → 空库 restore 验证 |
-| 3 | **恢复演练** | 未演练的备份不算备份 | 在临时库上 restore 一次 dump，比对表数量与关键行数 |
+| 项 | 实测结果 |
+|---|---|
+| 数据库体积 | **32 MB** |
+| 文件卷 `data-files` 体积 | **568 K** |
+| 磁盘剩余 | **14.6 T** ⇒ 全量 ×10 份毫无压力（这正是"不需要增量"的实证） |
+| 当前迁移版本 | `106`，`dirty=f`（干净） |
+| `pg_dump` / `pg_restore` 在 `paradedb/paradedb:v0.22.6-pg17` 中可用 | ✅ dump 2.8M，`pg_restore -l` 可解析 |
+| **特殊索引是否在 dump 中** | ✅ 含 `USING bm25` ×1、`USING hnsw` ×3、`CREATE EXTENSION pg_search WITH SCHEMA paradedb` |
 
-**关于第 2 项的已知约束**：ParadeDB 的 BM25 索引与 pgvector 的 HNSW 索引都是**扩展提供的特殊索引**。
+⇒ 结论：**dump 内容正确** —— 恢复时 BM25 / HNSW 索引会随 dump 一起重建，不需手工补建。
+
+### 4.2 ★ 仍未做：恢复演练
+
+**未演练的备份不算备份。** 建议做法（在临时库上做，不碰正式数据）：
+
+```bash
+# 1) 建临时库
+docker exec -e PGPASSWORD=<pw> WeKnora-postgres psql -U postgres -c 'CREATE DATABASE weknora_restore_test'
+# 2) 恢复
+docker exec -i -e PGPASSWORD=<pw> WeKnora-postgres pg_restore -U postgres -d weknora_restore_test < db.dump
+# 3) 比对表数量与关键行数，然后删掉临时库
+```
+
+**已知约束（恢复端须满足）**：ParadeDB 的 BM25 索引与 pgvector 的 HNSW 索引由**扩展提供**。
 恢复端必须**先有匹配版本的扩展**（`pg_search` 当前为 `0.22.6`，与镜像 tag 对应），
-否则 `pg_restore` 会在建索引阶段失败。迁移链里已有版本升级的防御逻辑
+否则 `pg_restore` 会在建索引阶段失败。迁移链里已有同类防御逻辑
 （`migrations/versioned/000099_pg_search_0226.up.sql`：仅在已装 0.22.2–0.22.5 且镜像提供 0.22.6 时升级，
-否则 `RAISE NOTICE` 交人工处理）——**恢复流程应与之一致：版本不匹配时不自动降级**。
+否则 `RAISE NOTICE` 交人工处理）—— **恢复流程应与之一致：版本不匹配时不自动降级**。
 
 ---
 
@@ -329,13 +372,14 @@ ssh nanning-111 '/mnt/data/weknora/my-scripts/backup-weknora.sh --status'
 | 7 | 迁移控制权（§2.3） | A. 保持 `AUTO_MIGRATE=true` + 重启后查日志<br>B. 改 `false` + 显式迁移 | B 让"重启容器"重新变回安全动作 |
 | 8 | `AUTO_RECOVER_DIRTY`（§2.3） | A. 保持默认开（dirty 时自动重试）<br>B. 设 `false`，让 dirty 成为**显式失败** | 涉及正式数据，建议偏 B |
 
-### 5.3 尚未验证 / 尚未安装（需授权在 111 执行）
+### 5.3 已完成 / 未完成（在 111 上）
 
-| # | 事项 | 为什么必须做 |
+| # | 事项 | 状态 |
 |---|---|---|
-| 9 | **安装 cron** 并跑一次真实备份 | 方案只有跑起来才算落地 |
-| 10 | 数据体积、`pg_dump` 在 paradedb 镜像中的兼容性 | 见 §4 |
-| 11 | **恢复演练** | ★ 未演练的备份不算备份 —— 尤其要验证 ParadeDB 的 BM25 / HNSW 索引能否在 restore 时重建 |
+| 9 | 代码同步到 111（经 `sync` 子命令，不碰容器） | ✅ 已完成（111 至 `3ac90e3a`） |
+| 10 | **安装 cron** + 跑一次真实备份 | ✅ 已完成（2026-09-21 23:29，首次备份 6 秒 / 3.3M） |
+| 11 | 数据体积、`pg_dump` 兼容性 | ✅ 已实测（§4.1） |
+| 12 | **恢复演练** | ⬜ **仍未做** —— 这是当前唯一的缺口（§4.2） |
 
 ---
 
