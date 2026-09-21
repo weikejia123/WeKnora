@@ -1,71 +1,160 @@
-# my-docker —— 我们自己的部署配置
+# my-docker —— 站点定制层（一个容器组的定义）
 
-本目录存放**站点定制版**的 Compose 配置。部署一律用这里的文件，**不改动仓库根的官方 `docker-compose.yml`**。
+## 一、部署形态：**一个容器组**
 
-## 为什么单独放一个目录
+本目录**不是"另一套编排"**，而是官方编排之上的**叠加层**。两份文件合并后属于
+**同一个 compose 项目（`weknora`）、同一个容器组**，一次 `up -d` 起停全部。
 
-| 诉求 | 这样做的效果 |
-|---|---|
-| 上游更新时零冲突 | 官方 `docker-compose.yml` 保持原样，`git pull` 不会撞车 |
-| 定制集中、可追溯 | 所有站点差异都在 `my-docker/docker-compose.yml`，受版本控制 |
-| 不产生漂移产物 | 不用 override 文件、不用 `--build-arg`、不生成临时产物 |
+| 文件 | 角色 | 上游更新时 |
+|---|---|---|
+| `docker-compose.yml`（仓库根） | **基底** —— 官方的服务定义，**一字不动** | 自动继承上游新增的 service / 变量 |
+| `my-docker/docker-compose.overlay.yml` | **叠加** —— 我们的全部定制 | 我们维护；**唯一需要改的编排文件** |
 
-**差异清单不在本文件重复** —— 它是「单一事实来源」放在 `docker-compose.yml` 的**文件头注释**里，
-紧贴被改动的代码，同步上游时按编号逐条比对即可。本文件只补充 yml 里放不下的部分。
+> **为什么用「基底 + 叠加」而不是"复制一份再改"**：合并语义等价，但官方文件保持原样 ⇒
+> 上游更新时零冲突且自动继承，我们的定制也不会散落多处。
 
-## 用法
+### 容器组清单（均为 wkj-dev 分支源码构建）
+
+| 服务 | 来源 | 说明 |
+|---|---|---|
+| `postgres` · `redis` · `docreader` · `app` · `frontend` | 官方基底 | 本层只改各自的定制项（构建源、端口） |
+| **`frontend-wkj`** | **本层新增** | 定制前端，源码 `my-frontend/` |
+| **`nginx`** | **本层新增** | 接入层：两个前端的 HTTPS/WSS 统一入口 |
+
+### 对外端口
+
+| 端口 | 指向 | 协议 |
+|---|---|---|
+| `443` | nginx → 官方前端 | **https / wss**（便捷入口，免带端口） |
+| `41200` | nginx → 官方前端 | **https / wss** |
+| `41280` | nginx → 定制前端 | **https / wss** |
+| `41201` | `app`（后端 API） | http（未纳入 TLS） |
+
+两个前端容器**只绑宿主回环** `14100` / `14102`（仅供诊断直连，不对外）
+⇒ **"没有 http 前端端口"是结构上的事实，不是约定。**
+
+## 二、目录结构
+
+```
+docker-compose.yml                      # 官方基底（一字不动，随上游更新）
+my-docker/
+  ├─ docker-compose.overlay.yml         # ★ 叠加层：全部定制（新增服务 + 覆盖项）
+  ├─ README.md                          # 本文件
+  └─ nginx/                             # 接入层的配置资产
+       ├─ nginx.conf                    #   两个 server 块（443/41200 官方，41280 定制）
+       ├─ gen-certs.sh                  #   自签 CA + 服务器证书生成（幂等）
+       └─ README.md                     #   接入层详解：部署/信任/验证/排查
+my-frontend/                            # 定制前端源码（官方 frontend/ 的逐字副本）
+```
+
+**差异清单（改了什么、为什么）** 是单一事实来源，放在
+`docker-compose.overlay.yml` 的**文件头注释**里，紧贴被改的代码 ——
+这里不重复，避免两处维护。
+
+## 三、用法
 
 ```bash
 cd <仓库根>
+C="docker compose --project-directory . --env-file .env \
+     -f docker-compose.yml -f my-docker/docker-compose.overlay.yml"
 
-# 统一命令形态（务必带 --project-directory，原因见 yml 头部说明）
-docker compose --project-directory . --env-file .env \
-               -f my-docker/docker-compose.yml <子命令>
-```
-
-例如：
-
-```bash
-C="docker compose --project-directory . --env-file .env -f my-docker/docker-compose.yml"
-$C config          # 校验并查看解析结果
+$C config          # 校验并查看合并结果
 $C ps              # 状态
 $C logs -f app     # 日志
-$C build           # 从源码构建（二开用；默认构建 app/frontend/docreader）
-$C up -d           # 启动
+$C build           # 从源码构建（默认 app / frontend / docreader）
+$C up -d           # 启动整个容器组
 ```
 
-**不需要改任何相对路径**：加 `--project-directory` 后 `build.context`、bind mount、`env_file: .env`
-全部恢复为「相对仓库根」的原语义。已实测与官方配置的 `docker compose config` 输出逐行一致。
+两个 `-f` **必须都给、且顺序不能反**（相对路径以第一个文件的目录为基准；
+这里第一个是仓库根的官方文件 ⇒ 基准 = 仓库根 ⇒ 无需改任何相对路径）。
 
-> ⚠️ 漏掉 `--project-directory` 会怎样：`env_file: .env` 会去找 `my-docker/.env`（不存在）→
-> **报错退出**；极端情况下若那里恰好有 `.env`，项目名会退化成 `my-docker` → 指向一套**新建的空数据卷**。
-> 所以部署脚本已加项目名断言（必须为 `weknora`）来兜底。
+> ⚠️ 漏掉 `--project-directory` 或把 overlay 放前面，都会让 `build.context` /
+> bind mount 的解析基准错位 —— 极端情况下项目名退化成别的名字，指向一套**新建的空数据卷**。
+> 部署脚本已加项目名断言（必须为 `weknora`）兜底。
 
-## `.env` 在哪
-
-**仍在仓库根**（`<仓库根>/.env`），不在本目录。
-
-原因：`.env` 内含生产密钥（数据库密码、JWT 密钥、`SYSTEM_AES_KEY`），已被 `.gitignore` 忽略，**不能进仓库**。
-所以 `.env` 是「部署现场的状态」，`my-docker/` 是「受版本控制的配置」——两者职责分开。
-模板见仓库根的 `.env.example`。
-
-## 上游同步
-
-官方 `docker-compose.yml` 更新后：
-
-```bash
-./deploy/deploy-wkj-dev.sh compose-diff      # 查看官方与 my-docker 的差异
-```
-
-看到上游新增/修改的内容后，**逐条判断是否需要搬进 `my-docker/docker-compose.yml`**，
-并同步更新头部差异清单的编号。这一步是为了防止本文件**悄悄过期**（上游加了新服务/新参数而这里没有）。
-
-## 部署
-
-`deploy/deploy-wkj-dev.sh` 已经把上面那串参数封装好了，直接用脚本即可：
+**日常不用手敲这串** —— `deploy/deploy-wkj-dev.sh` 已封装：
 
 ```bash
 ./deploy/deploy-wkj-dev.sh deploy     # 首次部署
-./deploy/deploy-wkj-dev.sh update     # 日常更新（用官方预构建镜像）
-./deploy/deploy-wkj-dev.sh build      # 二开：从源码构建（让你的代码生效）
+./deploy/deploy-wkj-dev.sh build      # 二开：从源码构建（让代码生效）
+./deploy/deploy-wkj-dev.sh status     # 全部容器状态
+./deploy/deploy-wkj-dev.sh compose-diff   # 复核我们相对官方改了什么
 ```
+
+## 四、`.env` 在哪
+
+**仍在仓库根**（`<仓库根>/.env`），不在本目录。
+
+理由：`.env` 含生产密钥（数据库密码、JWT、`SYSTEM_AES_KEY`），已被 `.gitignore` 忽略、
+**不能进仓库** ⇒ 它是「部署现场的状态」；`my-docker/` 是「受版本控制的配置」。两者职责分开。
+模板见仓库根 `.env.example`。
+
+## 五、定制前端（`frontend-wkj`）
+
+| 项 | 官方前端 | 定制前端 |
+|---|---|---|
+| 源码 | `frontend/` | **`my-frontend/`**（逐字副本） |
+| 镜像 tag | `wechatopenai/weknora-ui` | **`wechatopenai/weknora-ui-wkj`** |
+| 容器名 | `WeKnora-frontend` | **`WeKnora-frontend-wkj`** |
+| 对外地址 | `https://10.168.1.111:41200/` | **`https://10.168.1.111:41280/`** |
+| 容器绑定 | `127.0.0.1:14100`（回环） | `127.0.0.1:14102`（回环） |
+
+后端是同一个（`app`）⇒ **两个前端看到同一份数据**；登录状态不共享（token 按 origin 隔离，
+两个地址各登录一次，属浏览器同源策略的正常结果）。
+
+### 为什么副本是「逐字复制」
+
+```bash
+diff -r frontend my-frontend     # 应恒等于"你刻意的改动量"，没有噪声
+```
+
+这是**以后按需合并官方更新**的基准 —— 所以：
+
+- **源码改动** → 只改 `my-frontend/`
+- **编排/说明** → 留在本目录，**不放进副本**（`.dockerignore` 没排除它们，放进去会被
+  `COPY . .` 带进构建，且 `diff -r` 从此不为零）
+- 副本复制点：`____________`（2026-09-21，**下次与官方合并时按它对照**）
+
+### 与官方合并的做法（以后按需）
+
+```bash
+git log --oneline <复制点>..HEAD -- frontend/    # 官方 frontend 改了什么
+git diff --stat <复制点>..HEAD -- frontend/
+# 逐项判断：与你的改动冲突 → 手工合并；你没动过 → 直接覆盖
+C="docker compose --project-directory . --env-file .env -f docker-compose.yml -f my-docker/docker-compose.overlay.yml"
+$C build frontend-wkj && $C up -d frontend-wkj
+diff -r frontend my-frontend                     # 复查差异面仍只有你的刻意改动
+```
+
+## 六、接入层（`nginx`）
+
+见 **[`nginx/README.md`](nginx/README.md)** —— 端口总表、证书生成与信任、三个入口的验证、
+排查清单、以及 2026-09-21 由 `tls` 正名为 `nginx` 的迁移记录。
+
+一句话：BrowserSkill 配对要求非 localhost 必须 `wss`
+（`internal/browserskill/manager.go:178-190`），所以浏览器必须用 `https://` 打开页面 ——
+接入层就是为此存在，**两个前端共用同一张自签证书**。
+
+## 七、与上游同步
+
+```bash
+./deploy/deploy-wkj-dev.sh compose-diff
+```
+
+它会渲染并比对「纯官方」与「官方 + 我们的叠加层」，列出差异。**目的是发现本文件是否过期**：
+上游若新增了 service 或改了某个我们也在改的字段，需要逐条判断是否同步。
+
+> 注意：`my-docker/` 已不再是"官方副本"，所以 `compose-diff` 的差异**天然非零** ——
+> 它现在的用途是"我们改了什么"的复核，而不再是"应该没有差异"的自检。
+
+## 八、几个必须知道的点
+
+| 事项 | 说明 |
+|---|---|
+| **两个 `-f` 缺一不可、顺序固定** | 相对路径以第一个 `-f` 的目录为基准；先把官方文件放前面，基准才是仓库根 |
+| **`!override` 是替换序列字段的唯一手段** | Compose 对 `ports` / `volumes` 默认**追加**。本层用 `ports: !override` 让官方前端让出 41200。两台实测均支持（本机 v5.1.2 / 111 v5.5.1） |
+| **`.env` 的 `FRONTEND_PORT` 已失效** | 被 `!override` 覆盖。对外端口以 `nginx` 为准 |
+| **镜像 tag 绝不与官方共用** | `weknora-ui-wkj` 独立；共用会被 `pull` / `build` 互相静默覆盖 |
+| **副本里的 dotfile 要 `git add -f`** | 根 `.gitignore:2` 的 `.*` 规则会拦下新文件；官方 `frontend/.dockerignore` 因**早已被跟踪**而豁免，副本是新文件 ⇒ 会被漏掉，导致 111 上**没有 `.dockerignore`**（Docker 只在 context 根找它，不会向上找）。已用 `-f` 纳入。<br>★ 以后在副本里新增任何 dotfile 同样要 `-f`；若允许改官方 `.gitignore`，加一条 `!my-frontend/.*` 更省事 |
+| **`package.json.md5` 是失效文件** | 记录值与当前 `package.json` 不符，但全仓无引用、且被 `.dockerignore` 排除 ⇒ 不影响构建。保留它只为与官方一致 |
+| **运行时可配只有 4 项** | `MAX_FILE_SIZE_MB` / `MAX_SKILL_BUNDLE_SIZE_MB` / `DEFAULT_LOCALE`（+ `EMBED_BASE_URL` 在 `public/config.js`），其余改动都要动源码 |

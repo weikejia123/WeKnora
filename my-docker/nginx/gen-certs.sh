@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# 生成 WeKnora TLS 终端所需的自签证书（CA + 服务器证书）。
+# 生成 WeKnora 接入层（my-docker/nginx）所需的自签证书（CA + 服务器证书）。
+#
+# ★ 证书目录默认 /mnt/data/weknora-tls 刻意保留历史名（原 tls 目录改名为 nginx 时未动它）：
+#   改名会让人误以为要重新生成，而重新生成会让访问端已导入的 CA 信任失效。
 #
 # 在**目标机**上运行（证书 SAN 要写目标机的访问地址）。
 #
@@ -97,5 +100,5 @@ echo "=== CA 指纹（导入访问端后请核对一致）==="
 openssl x509 -in "$DIR/ca.crt" -noout -fingerprint -sha256 | sed 's/^/  /'
 echo ""
 echo "完成。下一步："
-echo "  1) docker compose -f my-docker/tls/docker-compose.yml up -d"
+echo "  1) docker compose -f my-docker/nginx/docker-compose.yml up -d"
 echo "  2) 把 $DIR/ca.crt 导入访问端（Mac）并设为「始终信任」"

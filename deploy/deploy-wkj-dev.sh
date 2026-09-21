@@ -5,7 +5,10 @@
 #   部署分支：wkj-dev
 #   部署目标：nanning-111 (10.168.1.111)  →  /mnt/data/weknora
 #   代码中转：nanning-110 Gitea (10.168.1.110:13000) → wakeagent/WeKnora
-#   对外端口：41200 (前端) / 41201 (后端 API)
+#   对外入口：41200 = 官方前端(https) · 41280 = 定制前端(https) · 41201 = 后端 API(http)
+#             https 入口由容器组内的 nginx 服务提供（配置在 my-docker/nginx/）；
+#             两个前端容器**只绑宿主回环**（14100 / 14102）
+#             ⇒ "没有 http 前端端口"是结构上的事实，不是约定。
 #
 # 用法：
 #   ./deploy-wkj-dev.sh deploy      首次部署 / 完整部署（幂等，可重复执行）
@@ -15,13 +18,15 @@
 #   ./deploy-wkj-dev.sh logs [svc]  查看日志（默认 app）
 #   ./deploy-wkj-dev.sh restart     重启容器
 #   ./deploy-wkj-dev.sh health      健康检查
-#   ./deploy-wkj-dev.sh compose-diff 对比官方与 my-docker 的 compose 差异（防过期）
+#   ./deploy-wkj-dev.sh compose-diff 复核站点容器组相对官方的定制面（防叠加层过期）
 #   ./deploy-wkj-dev.sh shell       登录 111
 #   ./deploy-wkj-dev.sh down        停止容器（保留数据）
 #
-# ★ 编排文件：一律使用 my-docker/docker-compose.yml（站点定制版），
-#   仓库根的官方 docker-compose.yml 保持原样，同步上游时零冲突。
-#   调用时统一带 --project-directory（保持相对路径按仓库根解析，见下方注释）。
+# ★ 编排形态：**一个容器组** = 官方基底 + 我们的叠加层
+#     -f docker-compose.yml（官方，一字不动）        ← 上游更新自动继承其变化
+#     -f my-docker/docker-compose.overlay.yml        ← 我们的全部定制（唯一改动点）
+#   两份合并后是同一个 project（weknora）、同一个容器组，一次 up -d 起停全部。
+#   调用统一带 --project-directory（相对路径以第一个 -f 的目录为基准）。
 #
 # ★ 关键区分：deploy/update 用的是「官方预构建镜像」，build 才用「你的二开代码」
 #   编排文件里每个服务同时写了 image: 与 build:，共用同一个 tag。
@@ -51,15 +56,18 @@ readonly FRONTEND_PORT=41200                    # 前端对外端口
 readonly APP_PORT=41201                         # 后端对外端口
 readonly HEALTH_TIMEOUT=420                     # 健康检查最长等待（秒），首次启动需建表
 
-# ★ 部署一律使用 my-docker/ 下的「站点定制 compose」；仓库根的官方
-#   docker-compose.yml 保持原样，以便同步上游时零冲突。
-#   --project-directory 是**必需**的：Compose 的相对路径（build.context /
-#   bind mount / env_file）默认按 compose 文件所在目录解析，文件放进 my-docker/
-#   后 `context: .` 变成 my-docker/、`env_file: .env` 去找 my-docker/.env。
-#   加 --project-directory 指向仓库根即恢复原语义 —— 已实测与官方配置的
-#   `docker compose config` 输出逐行一致（项目名、数据卷名、路径均不变）。
-readonly COMPOSE_FILE_REL="my-docker/docker-compose.yml"
-readonly DC="docker compose --project-directory $REMOTE_DIR --env-file $REMOTE_DIR/.env -f $REMOTE_DIR/$COMPOSE_FILE_REL"
+# ★ 部署形态：**一个容器组** = 官方基底 + 我们的叠加层。
+#   基底是仓库根的官方 docker-compose.yml（一字不动 ⇒ 上游更新自动继承）；
+#   叠加层是 my-docker/docker-compose.overlay.yml（我们的全部定制：新增
+#   frontend-wkj / nginx 两个服务，并覆盖若干字段）。
+#   两份 -f 合并后属于同一个 project（weknora）、同一个容器组。
+#
+#   --project-directory 指向仓库根是**必需**的：相对路径以**第一个 -f 的目录**
+#   为基准；这里第一个就是仓库根的官方文件 ⇒ build.context / bind mount /
+#   env_file 全部保持原语义，无需改任何相对路径。顺序也不能反。
+readonly COMPOSE_BASE_REL="docker-compose.yml"
+readonly COMPOSE_OVERLAY_REL="my-docker/docker-compose.overlay.yml"
+readonly DC="docker compose --project-directory $REMOTE_DIR --env-file $REMOTE_DIR/.env -f $REMOTE_DIR/$COMPOSE_BASE_REL -f $REMOTE_DIR/$COMPOSE_OVERLAY_REL"
 
 # 颜色
 readonly C_OK=$'\033[0;32m'; readonly C_ERR=$'\033[0;31m'
@@ -115,10 +123,10 @@ preflight_remote() {
   ' >/dev/null 2>&1 || die "111 环境检查失败（docker / compose / /mnt/data 挂载）"
   ok "docker + compose 可用，/mnt/data 已挂载"
 
-  # 站点定制 compose 必须在位（部署一律用它）
-  ssh "$SSH_HOST" "test -f '$REMOTE_DIR/$COMPOSE_FILE_REL'" 2>/dev/null \
-    || die "111 上缺少 $REMOTE_DIR/$COMPOSE_FILE_REL —— 先跑一次 sync_code，或确认 $BRANCH 分支包含 my-docker/"
-  ok "站点定制 compose 在位：$COMPOSE_FILE_REL"
+  # 叠加层与官方基底都必须在位（一个容器组由这两份文件共同定义）
+  ssh "$SSH_HOST" "test -f '$REMOTE_DIR/$COMPOSE_OVERLAY_REL' && test -f '$REMOTE_DIR/$COMPOSE_BASE_REL'" 2>/dev/null \
+    || die "111 上缺少 $REMOTE_DIR/$COMPOSE_OVERLAY_REL（或官方基底）—— 先跑一次 sync_code"
+  ok "编排在位：$COMPOSE_BASE_REL（基底） + $COMPOSE_OVERLAY_REL（叠加）"
 }
 
 # ------------------------------------------------------------------ 代码同步
@@ -212,6 +220,9 @@ setkv JWT_SECRET "$JWT"
 setkv SYSTEM_AES_KEY "$AES"
 setkv SYSTEM_SIGNING_KEY "$SIGN"
 setkv DISABLE_REGISTRATION false
+# 注意：FRONTEND_PORT 已被 my-docker/docker-compose.overlay.yml 用 `!override`
+# 覆盖（前端容器只绑回环，对外端口由容器组内的 nginx 提供）。仍写入是为了兼容
+# 官方 .env.example 模板；它的值**不影响实际对外端口**。
 setkv FRONTEND_PORT "$FP"
 setkv APP_PORT "$AP"
 setkv STORAGE_TYPE local
@@ -344,7 +355,7 @@ _preflight_build_sources() {
     echo "    ✘ 构建源自检未通过，已中止（避免白等 30+ 分钟）。"
     echo "      覆盖方式：编辑 $DIR/.env 里的"
     echo "        APT_MIRROR / APK_MIRROR_ARG / GOPROXY_ARG / NPM_REGISTRY"
-    echo "      后重试；参数取值语义见 my-docker/docker-compose.yml 文件头。"
+    echo "      后重试；参数取值语义见 my-docker/docker-compose.overlay.yml 文件头。"
     exit 1
   fi
 }
@@ -461,8 +472,10 @@ until [ "$(docker inspect WeKnora-app --format '{{.State.Health.Status}}' 2>/dev
 done
 echo "  ✔ 后端已就绪（用时 ${_w}s）"
 
-echo "  启动前端..."
-$DC up -d frontend
+echo "  启动前端与接入层..."
+# nginx 依赖两个前端（同一个容器组内 depends_on 才生效）；
+# 前端容器只绑回环，对外入口（443 / 41200 / 41280）全部由 nginx 提供。
+$DC up -d frontend frontend-wkj nginx
 
 echo ""
 $DC ps --format 'table {{.Name}}\t{{.Status}}'
@@ -475,7 +488,8 @@ health_check() {
   step "⑤ 健康检查"
   local i=0
   local url_app="http://10.168.1.111:${APP_PORT}/health"
-  local url_fe="http://10.168.1.111:${FRONTEND_PORT}/"
+  local url_fe="https://10.168.1.111:${FRONTEND_PORT}/（官方前端）"
+  local url_wkj="https://10.168.1.111:41280/（定制前端）"
 
   log "等待后端就绪（最长 ${HEALTH_TIMEOUT}s，首次启动需建库表）..."
   while [ $i -lt "$HEALTH_TIMEOUT" ]; do
@@ -497,19 +511,29 @@ health_check() {
   fe_state=$(ssh "$SSH_HOST" "docker inspect WeKnora-frontend --format '{{.State.Status}}'" 2>/dev/null || echo "missing")
   if [ "$fe_state" != "running" ]; then
     warn "前端容器状态为 ${fe_state}，尝试拉起..."
-    ssh "$SSH_HOST" "$DC up -d frontend" >/dev/null 2>&1 || true
+    ssh "$SSH_HOST" "$DC up -d frontend frontend-wkj nginx" >/dev/null 2>&1 || true
     sleep 3
   fi
 
-  local fe_code
-  fe_code=$(ssh "$SSH_HOST" "curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://localhost:${FRONTEND_PORT}/" 2>/dev/null || echo "000")
-  [ "$fe_code" = "200" ] && ok "前端 HTTP 200" || warn "前端返回 HTTP $fe_code"
+  # 接入层：两个前端的**对外 https 入口全靠它**，必须确认在跑
+  local ng_state c_off c_wkj
+  ng_state=$(ssh "$SSH_HOST" "docker inspect weknora-nginx --format '{{.State.Status}}'" 2>/dev/null || echo "missing")
+  if [ "$ng_state" = "running" ]; then
+    c_off=$(ssh "$SSH_HOST" "curl -sk -o /dev/null -w '%{http_code}' --max-time 8 https://localhost:${FRONTEND_PORT}/" 2>/dev/null || echo "000")
+    c_wkj=$(ssh "$SSH_HOST" "curl -sk -o /dev/null -w '%{http_code}' --max-time 8 https://localhost:41280/" 2>/dev/null || echo "000")
+    [ "$c_off" = "200" ] && ok "官方前端 https://…:${FRONTEND_PORT} → 200" || warn "官方前端返回 HTTP $c_off"
+    [ "$c_wkj" = "200" ] && ok "定制前端 https://…:41280 → 200" || warn "定制前端返回 HTTP $c_wkj"
+  else
+    warn "接入层 weknora-nginx 未运行（状态 ${ng_state}）⇒ 对外 https 入口不可用"
+    log  "  启动：ssh $SSH_HOST 'cd $REMOTE_DIR && $DC up -d nginx'"
+  fi
 
   printf '\n'
   printf '%s╭─────────────────────────────────────────────────────────────╮%s\n' "$C_OK" "$C_OFF"
   printf '%s│  部署完成%s                                                    │\n' "$C_OK" "$C_OFF"
   printf '%s╰─────────────────────────────────────────────────────────────╯%s\n' "$C_OK" "$C_OFF"
-  printf '   网页界面 : %s%s%s\n' "$C_INFO" "$url_fe" "$C_OFF"
+  printf '   官方前端 : %s%s%s\n' "$C_INFO" "$url_fe" "$C_OFF"
+  printf '   定制前端 : %s%s%s\n' "$C_INFO" "$url_wkj" "$C_OFF"
   printf '   后端 API : %s%s%s\n' "$C_INFO" "$url_app" "$C_OFF"
   printf '   部署目录 : 111:%s\n' "$REMOTE_DIR"
   printf '   部署分支 : %s%s%s\n' "$C_INFO" "$BRANCH" "$C_OFF"
@@ -538,7 +562,8 @@ cmd_restart() {
 
 cmd_health() {
   printf '后端: '; ssh "$SSH_HOST" "curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 6 http://localhost:${APP_PORT}/health"
-  printf '前端: '; ssh "$SSH_HOST" "curl -s -o /dev/null -w 'HTTP %{http_code}\n' --max-time 6 http://localhost:${FRONTEND_PORT}/"
+  printf '官方前端(https): '; ssh "$SSH_HOST" "curl -sk -o /dev/null -w 'HTTP %{http_code}\n' --max-time 6 https://localhost:${FRONTEND_PORT}/"
+  printf '定制前端(https): '; ssh "$SSH_HOST" "curl -sk -o /dev/null -w 'HTTP %{http_code}\n' --max-time 6 https://localhost:41280/"
 }
 
 cmd_down() {
@@ -547,41 +572,43 @@ cmd_down() {
   ok "已停止"
 }
 
-# 对比官方 compose 与站点定制版 —— 防止 my-docker 悄悄过期（上游加了服务/参数而这里没有）
+# 复核「我们的站点容器组相对官方改了什么」+ 检查叠加层是否过期
 cmd_compose_diff() {
-  step "对比官方与 my-docker 的 compose"
-  ssh "$SSH_HOST" "DIR='$REMOTE_DIR' DC='$DC' bash -s" <<'REMOTE_DIFF'
+  step "对比官方基底与站点容器组（复核我们的定制面）"
+  ssh "$SSH_HOST" "DIR='$REMOTE_DIR' DC='$DC' BASE='$COMPOSE_BASE_REL' OVERLAY='$COMPOSE_OVERLAY_REL' bash -s" <<'REMOTE_DIFF'
 set -e
 cd "$DIR"
 
-# 用「渲染后的 config」比对，忽略注释与排版差异，只留语义差异
-OFF="docker compose --project-directory $DIR --env-file $DIR/.env -f $DIR/docker-compose.yml"
+# 渲染后的 config 比对：忽略注释与排版，只留语义差异
+OFF="docker compose --project-directory $DIR --env-file $DIR/.env -f $DIR/$BASE"
 if ! $OFF config > /tmp/_wk_official.yml 2>/dev/null; then
   echo "  ⚠ 官方 compose 渲染失败（可能上游改了必填变量），跳过结构化比对"
 else
-  $DC config > /tmp/_wk_mydocker.yml 2>/dev/null
-  if diff -q /tmp/_wk_official.yml /tmp/_wk_mydocker.yml >/dev/null; then
-    echo "  ✔ 两份配置语义完全一致（无差异）"
-  else
-    echo "  语义差异（< 官方  > my-docker）："
-    diff -u /tmp/_wk_official.yml /tmp/_wk_mydocker.yml | sed -n '3,200p' | sed 's/^/  /'
-  fi
+  $DC config > /tmp/_wk_site.yml 2>/dev/null
+  n=$(diff /tmp/_wk_official.yml /tmp/_wk_site.yml | grep -c '^[<>]' || true)
+  echo "  站点容器组相对官方共 $n 行差异（**预期非零**：我们主动新增了 frontend-wkj 与 nginx）"
+  echo ""
+  echo "  差异明细（< 官方    > 我们的站点容器组）："
+  diff -u /tmp/_wk_official.yml /tmp/_wk_site.yml | sed -n '3,300p' | sed 's/^/  /'
 fi
 
 echo ""
-echo "--- 两份编排文件的最后一次提交 ---"
-printf '  官方      : '; git log -1 --format='%h %ad %s' --date=short -- docker-compose.yml
-printf '  my-docker : '; git log -1 --format='%h %ad %s' --date=short -- my-docker/docker-compose.yml
-
-off_ts=$(git log -1 --format=%ct -- docker-compose.yml 2>/dev/null || echo 0)
-my_ts=$(git log -1 --format=%ct -- my-docker/docker-compose.yml 2>/dev/null || echo 0)
+echo "--- 叠加层是否可能过期（与官方编排文件的提交时间对比） ---"
+printf '  官方基底   : '; git log -1 --format='%h %ad %s' --date=short -- "$BASE"
+printf '  我们的叠加 : '; git log -1 --format='%h %ad %s' --date=short -- "$OVERLAY"
+off_ts=$(git log -1 --format=%ct -- "$BASE" 2>/dev/null || echo 0)
+my_ts=$(git log -1 --format=%ct -- "$OVERLAY" 2>/dev/null || echo 0)
 echo ""
 if [ "$off_ts" -gt "$my_ts" ]; then
-  echo "  ⚠ 官方 docker-compose.yml 的最近提交比 my-docker 新 ——"
-  echo "    可能有上游变化尚未搬进 my-docker/docker-compose.yml，请逐条核对上面的差异。"
+  echo "  ⚠ 官方 $BASE 的最近提交比叠加层新 —— 上游可能改了某个我们也在改的字段，"
+  echo "    请对照上面的差异逐条核对是否需要同步（常见：新增服务、改名变量、改端口）。"
 else
-  echo "  ✔ my-docker 不比官方旧（无未同步的上游变化迹象）"
+  echo "  ✔ 叠加层不比官方新（无未同步的上游变化迹象）"
 fi
+echo ""
+echo "  判读要点：差异**天然非零**是正常的（我们新增了两个服务）。"
+echo "            这里要看的是「有没有非预期的差异」，而不是「是否为零」。"
+echo "            我们改了什么、为什么 —— 见 $OVERLAY 的文件头清单。"
 REMOTE_DIFF
 }
 
