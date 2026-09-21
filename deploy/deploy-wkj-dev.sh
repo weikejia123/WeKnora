@@ -17,7 +17,7 @@
 #   ./deploy-wkj-dev.sh up          只按当前编排重建容器（不 pull / 不 build）—— 改编排后用它生效
 #   ./deploy-wkj-dev.sh push-ui     构建前端并投递到 111（**无需重启**，立即可见）
 #   ./deploy-wkj-dev.sh push-reader 同步代码并重启 docreader（Python 免编译，秒级）
-#   ./deploy-wkj-dev.sh push-app    编译 app 并投递到 111（编译镜像；约 1 分钟，不重建容器）
+#   ./deploy-wkj-dev.sh push-app    编译 app 并投递到 111（编译镜像；**首次启用会重建容器**）
 #   ./deploy-wkj-dev.sh build       二开构建：在 111 上构建镜像后重启
 #   ./deploy-wkj-dev.sh status      查看容器状态
 #   ./deploy-wkj-dev.sh logs [svc]  查看日志（默认 app）
@@ -167,17 +167,33 @@ if [ ! -d "$DIR/.git" ]; then
   GIT_TERMINAL_PROMPT=0 git clone --branch "$BRANCH" "$REPO" "$DIR"
 else
   echo "  已存在仓库：fetch + 对齐到 origin/$BRANCH"
-  cd "$DIR"
-  # 保护：工作区有未提交改动时拒绝覆盖，避免静默丢失
-  if [ -n "$(git status --porcelain)" ]; then
-    echo "  ⚠ 检测到服务器工作区有未提交改动："
-    git status --short | head -10
-    echo "  ⚠ 已跳过 reset（如需强制对齐，请手工处理或加 --force）"
-  else
-    git fetch --prune origin "$BRANCH"
-    git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH" "origin/$BRANCH"
-    git reset --hard "origin/$BRANCH"
-  fi
+fi
+cd "$DIR"
+
+# ── 本地排除「后台编译产物」（用 .git/info/exclude，不改官方 .gitignore）──
+# 为什么必需：push-app 会在**仓库内**生成这些 Rust 产物
+#   third_party/anydoc-go/{target,lib,patched-anydoc}
+# 而官方 .gitignore 未覆盖它们 ⇒ 工作区从此"看起来脏"
+#   ⇒ 触发下方 reset 保护 ⇒ **每次都静默跳过代码同步**
+#     （表现为"部署成功，但 111 上跑的还是旧代码"，极难排查）。
+# 用 exclude 而非 .gitignore：它是**本地配置、不入库**，不需要改官方文件；
+#   代价是别处 clone 后要自行补 —— 由本段幂等补齐，故无手工步骤。
+mkdir -p .git/info
+for _p in /third_party/anydoc-go/target/ \
+          /third_party/anydoc-go/lib/ \
+          /third_party/anydoc-go/patched-anydoc/ ; do
+  grep -qxF "$_p" .git/info/exclude 2>/dev/null || echo "$_p" >> .git/info/exclude
+done
+
+# 保护：工作区有未提交改动时拒绝覆盖，避免静默丢失
+if [ -n "$(git status --porcelain)" ]; then
+  echo "  ⚠ 检测到服务器工作区有未提交改动："
+  git status --short | head -10
+  echo "  ⚠ 已跳过 reset（如需强制对齐，请手工处理或加 --force）"
+else
+  git fetch --prune origin "$BRANCH"
+  git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH" "origin/$BRANCH"
+  git reset --hard "origin/$BRANCH"
 fi
 cd "$DIR"
 echo "  当前提交: $(git log --oneline -1)"
@@ -607,12 +623,14 @@ cmd_push_reader() {
 }
 
 cmd_push_app() {
-  # 编译 app 并投递到映射目录，然后重启 —— 不重建镜像、不重建容器。
+  # 编译 app 并投递到映射目录，再让 app 加载它。
+  #   —— 不重建镜像；**首次启用**会重建一次容器（挂载在容器创建时固定，restart 不生效）。
   #
   # ★ 为什么用「编译镜像」而不是 docker build 全流程：
   #   现有 build 要走 browserskill + builder + final + 镜像 commit + 容器重建；
-  #   这里只需 builder 那一步的内容，产物直接落映射目录。
-  #   实测：编译 **68 秒**（对照全量 build 的 7~16 分钟）。
+  #   这里只做 builder 那一步的产物，直接落映射目录。
+  #   耗时主要两项：① Rust 侧 anydoc 静态库（首次真编译，之后 target/ 增量复用）
+  #   ② Go 全量编译。两者都靠挂载出来的缓存目录复用，稳态为分钟级。
   #
   # ★ 为什么不在 111 宿主上编译：
   #   宿主 Ubuntu 24.04 是 glibc 2.39，容器是 debian:12.12-slim（2.36）；
@@ -650,7 +668,15 @@ docker run --rm \
   -e VERSION="$V" -e COMMIT_ID="$C" -e BUILD_TIME="$T" -e GO_VERSION="$G" \
   "$IMG" \
   bash -c 'git config --global --add safe.directory /src && \
+           ./scripts/build-anydoc-lib.sh && \
            make build-prod GO_BUILD_TAGS=anydoc BINARY_NAME=/out/WeKnora'
+
+# ★ build-anydoc-lib.sh 不能省（首个版本漏了它 ⇒ 编译走到 link 才报
+#   `/usr/bin/ld: cannot find -lanydoc_go`）。它是 anydoc（进程内 office 解析）的
+#   Rust 静态库，官方 Dockerfile.app 的 builder 阶段同样先跑它、再 `make ... GO_BUILD_TAGS=anydoc`。
+#   产物落 third_party/anydoc-go/lib/<平台>/libanydoc_go.a，正是 cgo LDFLAGS 的 -L 路径。
+#   故必须在同一容器内先产出再链接 —— 两步拆开就会丢这个文件。
+#   耗时：首次真编译 Rust（数分钟），之后 target/ 落在挂载出来的仓库里 ⇒ 增量复用。
 
 ls -lh "$DIR/.build/WeKnora"
 echo "  ★ GLIBC 需求（容器上限 2.36）:"
@@ -658,9 +684,20 @@ grep -aoE "GLIBC_[0-9]+\.[0-9]+" "$DIR/.build/WeKnora" | sort -uV | tail -3 | se
 REMOTE_APP_BUILD
   ok "已编译并投递到 .build/WeKnora"
 
-  step "② 重启 app（加载新二进制；不会重建容器）"
-  ssh "$SSH_HOST" "$DC restart app"
-  ok "已重启 app"
+  step "② 让 app 加载新二进制"
+  # ★ 首次启用必须先**重建容器**：挂载是容器创建时固定的，`restart` 只换进程、
+  #   不会应用 overlay 新增的 `./.build/WeKnora:/app/WeKnora` 挂载
+  #   ⇒ 会出现"编译成功、也重启了、跑的还是镜像内那份旧二进制"。
+  #   判据 = 容器已挂载列表中是否含 destination `/app/WeKnora`。
+  if ssh "$SSH_HOST" "docker inspect WeKnora-app --format '{{range .Mounts}}{{.Destination}} {{end}}'" \
+       2>/dev/null | grep -q '/app/WeKnora'; then
+    ssh "$SSH_HOST" "$DC restart app"
+    ok "已重启 app（容器未重建 ⇒ 不触发数据库迁移）"
+  else
+    warn "容器尚未挂载外置二进制（首次启用）⇒ 需要重建容器（restart 不会应用新挂载）"
+    ssh "$SSH_HOST" "$DC up -d app"
+    ok "已重建 app 容器，外置挂载已生效"
+  fi
 
   step "③ 自证：容器内二进制的 commit"
   printf "  期望 commit: %s\n" "$(git -C "$REPO_ROOT" rev-parse --short=8 HEAD)"
