@@ -27,6 +27,9 @@
 需要改变行为时按序走：**构建参数 → 环境变量 → 叠加层 → 最后才考虑改文件**。
 （核对当前改动面的口径：`git diff --name-status upstream/main..HEAD`）
 
+**新增文件也不要放进官方目录**：我们自己的脚本一律放 **`my-scripts/`**（官方 `scripts/` 只读）；
+其余新增内容分别归 `my-docker/`（编排）、`my-frontend/`（前端）、`my-docs/`（文档）。
+
 ### 2. 前端：`frontend/` 只读，改动只落 `my-frontend/`
 
 `my-frontend/` 是 `frontend/` 的**逐字副本**。判据是
