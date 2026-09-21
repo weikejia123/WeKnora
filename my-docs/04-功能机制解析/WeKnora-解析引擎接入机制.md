@@ -158,6 +158,11 @@ flowchart TD
 设置 → 解析引擎 → 「PaddleOCR-VL（自建）」→ 填 endpoint → 测试连接 → 保存。
 再在知识库解析设置里，把 `pdf`（或图片类型）的引擎指定为该引擎。
 
+> **存量文档要重新解析才生效**：解析引擎规则只作用于**新入库**。
+> 已有文档走 `POST /knowledge/{id}/reparse`（单个，`knowledge.go` 的 `ReparseKnowledge`）
+> 或批量重解析异步任务（同文件 `enqueueKnowledgeListReparse`）。
+> 注意批量重解析会重新跑整条入库链路（分块 → 向量化），先在小样本上验证再铺开。
+
 **适配判据**（三条全中才算对齐）：
 
 1. 端点路径是 `/layout-parsing`；
