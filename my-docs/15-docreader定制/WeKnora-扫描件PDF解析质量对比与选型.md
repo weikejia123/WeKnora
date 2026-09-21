@@ -149,3 +149,80 @@
    *"Do NOT include any HTML tags"* ⇒ 轻微不遵守，下游分块需容忍。
 5. **`builtin` + VLM 的端到端实测尚未跑**（本次是在 110 上直接调 Ollama 做的对照，
    未经 WeKnora 的 `image_multimodal` 链路）。**建议做一次真实入库验证**。
+
+---
+
+## 六、版面检测的能力边界与模型选型（2026-09-22 调研）
+
+> 起因：老魏问「版面检测能做到什么程度？哪种最适合我们这种『文字 + 表格』的扫描 PDF（无公式）？」
+
+### 6.1 ★ 先澄清最容易混淆的一点：版面检测 ≠ 表格结构识别
+
+**两个不同的任务、两个不同的模型**：
+
+| | 版面检测（Layout Detection） | 表格结构识别（TSR） |
+|---|---|---|
+| 输入 | **整页图** | **表格区域图**（由版面检测框出） |
+| 输出 | **区域框 + 类别**（23 类） | **单元格行列结构**（HTML / `cell_bbox`） |
+| 回答 | 「这块是表格 / 标题 / 正文」 | 「这表几行几列、哪格跨行」 |
+| 代表模型 | PP-DocLayout-L/M/S | SLANet / SLANet_plus / SLANeXt |
+
+⇒ **只做版面检测，拿不到表格的行列结构。** 这是本领域最常见的误解。
+
+### 6.2 版面检测能做到什么程度
+
+**能做到**
+- 区域框 + **23 类语义标签**：document title / paragraph title / text / page number /
+  abstract / toc / references / footnotes / header / footer / algorithm / formula /
+  formula number / image / figure caption / **table** / table caption / seal / …
+- **阅读顺序**（多栏文档正确排序）
+- **可剔除页眉页脚页码**（有专门类别）
+
+**做不到**
+- 表格内部行列结构 → 需 **表格结构识别**
+- 单元格内容归属 → 需 **单元格检测 + IoU 匹配**
+- **段落级细分** → 只到「块」，块内段落仍需几何判据（即我们现有 `LayoutRestructurer` 的活）
+- 文字内容 → 需 OCR
+
+**模型规格**（PaddleOCR / PaddleX）：
+
+| 模型 | 骨干 | mAP(0.5) | GPU 推理(ms) 常规/高性能 | 大小 |
+|---|---|---|---|---|
+| PP-DocLayout-L | RT-DETR-L | **90.4** | 33.59 / **10.39** | 123.8 MB |
+| PP-DocLayout-M | PicoDet-L | 75.2 | 13.03 / 4.72 | 22.6 MB |
+| PP-DocLayout-S | PicoDet-S | 70.9 | 11.54 / **3.86** | **4.8 MB** |
+| PP-DocLayout_plus-L | RT-DETR-L | 83.2（20 类） | 17.23 | 126 MB |
+| **PicoDet_layout_1x_table** | PicoDet-1x | **97.5** | 8.02 / 3.09 | **7.4 MB** |
+
+> `PicoDet_layout_1x_table` 值得注意：**只检测表格区域，但 mAP 97.5**（远高于通用版面模型）。
+> 只关心「哪里有表格」时它最优；要标题/正文/页眉的语义，仍需完整版面模型。
+
+### 6.3 ★ 针对「文字 + 表格」场景的推荐组合：PaddleOCR 生态（PP-TableMagic）
+
+| 环节 | 模型 | 大小 | 指标 | 备注 |
+|---|---|---|---|---|
+| 版面检测 | **PP-DocLayout-L** | 123.8 MB | mAP 90.4 | 输出区域类别 |
+| 表格分类 | PP-LCNet_x1_0_table_cls | 6.6 MB | Top1 94.2% | 有线/无线判别 |
+| **表格结构识别** | **SLANeXt_wired**（或 `_wireless`） | 351 MB | 结构精度 69.65% | **输出 HTML** |
+| 表格单元格检测 | RT-DETR-L_wired_table_cell_det | 124 MB | mAP 82.7 | 提供 `cell_bbox` |
+| **文字识别** | **PP-OCRv6** | — | — | **已有** ✓ |
+| 预处理（建议加） | PP-LCNet_x1_0_doc_ori | **7 MB** | 99.06% | 页面方向 0/90/180/270 |
+| 预处理（建议加） | **UVDoc** | 30.3 MB | 0.179 CER | **扫描件弯曲/变形矫正** |
+
+**总模型体积约 650 MB（不含 OCR）⇒ 显存量级 1~2 GB，110 的 6.2 GB 空闲够用。**
+
+**为什么这是最适合我们的**：
+
+1. ★ **与现有 PP-OCRv6 服务同源**（同一套 PaddleOCR / PaddleX）⇒ **只需在现有服务上加模块，
+   不引入新框架、不重复部署**；
+2. 表格链路成熟：**PP-TableMagic = 表格分类 + 结构识别 + 单元格检测**，直接输出 HTML；
+3. ★★ **官方已实现「用单元格几何切分 OCR 结果」** —— `use_ocr_results_with_table_cells`（默认开），
+   用 **L1 距离 + IoU** 把 OCR 文本行归属到单元格。
+   ⇒ **这正是解耦方案里我们打算手写的那一环，官方版本已有，不必自己造轮子**；
+4. 模块可独立开关 ⇒ 关掉公式 / 印章 / 图表，显存按需。
+
+### 6.4 两点提醒
+
+- **`use_table_orientation_classify`（默认开）**：先校正 90/180/270 度旋转的表格再识别；
+- **69.65% 是「结构识别」指标**，不等于最终表格可用率。**有线表（我们这类公文表格多为有线）
+  表现明显优于无线表** ⇒ 这是选 `SLANeXt_wired` 的理由。
