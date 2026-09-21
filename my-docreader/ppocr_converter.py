@@ -278,8 +278,20 @@ class LayoutRestructurer:
         h_med = median(heights)
         min_x1 = min(r[0]["x1"] for r in rows)
 
+        # 段落判据的基准 = **典型行间距**，不是行高。
+        # ★ 实测教训：中文公文的行距约为字形高的 2 倍（35px 字 / 76px 间距），
+        #   拿"行高"当基准会把每一行都判成新段（段落块 46 → 90，段落结构被毁）。
+        #   改用相邻行带 yc 间距的**中位数**做基准，只抓"明显大于常规行距"的空隙。
+        #   代价：所有间距等距的稀疏排版（封面、图注）不会被分段 —— 可接受，
+        #   因为那种情况下文字不会丢，而误分段会毁掉真实文档的段落结构。
+        _ycs = [r[0]["yc"] for r in rows]
+        _gaps = [_ycs[i + 1] - _ycs[i] for i in range(len(_ycs) - 1)]
+        gap_med = median(_gaps) if _gaps else 0.0
+        gap_threshold = gap_med * 1.4 if gap_med else float("inf")
+
         out: list[str] = []
         para: list[str] = []
+        last_yc: Optional[float] = None      # 上一行带的 y 中心
 
         def flush() -> None:
             if para:
@@ -302,13 +314,21 @@ class LayoutRestructurer:
                 else:
                     flush()
                     out.append(f"{'#' * level} {text}")
+                last_yc = None                # 标题之后必起新段
                 continue
 
-            # 段落边界：段首缩进（中文公文典型缩进 2 字符）
+            # 段落边界①：行**中心距**明显大于常规行距 ⇒ 新段。
+            #   ★ 必须用 yc（中心）而不是「上一行底边 → 本行顶边」的间隙：
+            #     OCR 的 bbox 高度常已吃掉行距，间隙会算出接近 0 的值（实测踩过）。
+            #   ★ 阈值基准是 gap_med（行间距中位数）而非行高，见函数开头注释。
+            gap_break = (last_yc is not None
+                         and (first["yc"] - last_yc) > gap_threshold)
+            # 段落边界②：段首缩进（中文公文典型缩进 2 字符）
             indented = (first["x1"] - min_x1) > h_med * 1.2
-            if indented and para:
+            if (gap_break or indented) and para:
                 flush()
             para.append(text)
+            last_yc = first["yc"]
 
         flush()
         return "\n\n".join(out)
