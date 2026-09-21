@@ -14,6 +14,7 @@
 #   ./deploy-wkj-dev.sh deploy      首次部署 / 完整部署（幂等，可重复执行）
 #   ./deploy-wkj-dev.sh update      更新：推代码 → 拉取 → 重建容器
 #   ./deploy-wkj-dev.sh sync        只同步代码到 111（**不碰容器**，故不触发 DB 自动迁移）
+#   ./deploy-wkj-dev.sh up          只按当前编排重建容器（不 pull / 不 build）—— 改编排后用它生效
 #   ./deploy-wkj-dev.sh push-ui     构建前端并投递到 111（**无需重启**，立即可见）
 #   ./deploy-wkj-dev.sh push-reader 同步代码并重启 docreader（Python 免编译，秒级）
 #   ./deploy-wkj-dev.sh build       二开构建：在 111 上构建镜像后重启
@@ -440,6 +441,12 @@ _build_with_version() {
 if [ "$MODE" = "build" ]; then
   echo "  构建镜像（二开模式，耗时较长，可能 20-40 分钟）..."
   _build_with_version
+elif [ "$MODE" = "up" ]; then
+  # 只按当前编排重建容器：不 pull、不 build。
+  # 用于「改了编排 / 投递了产物」后让改动生效 —— compose 只会重建
+  # config-hash 真正变了的服务（例如应用代码外置后只需重建 frontend-wkj 与 docreader，
+  # app 的编排没变就不会被动到 ⇒ 也不会触发数据库迁移）。
+  echo "  up 模式：跳过 pull / build，只按当前编排重建容器"
 elif [ "$local_built" = "1" ] && [ "${ALLOW_OVERWRITE:-0}" != "1" ]; then
   echo ""
   echo "  ⚠ 已阻止 pull —— 111 上存在本地构建的二开镜像。"
@@ -550,6 +557,11 @@ cmd_update() { preflight_local; sync_code; ensure_env; compose_up pull; health_c
 # 重建 app 容器会触发数据库自动迁移（AUTO_MIGRATE 默认开且失败不阻断），
 # 详见 my-docs/11-数据安全与备份/WeKnora-数据安全与备份方案.md §2.3。
 cmd_sync()   { preflight_local; sync_code; }
+
+# 只按当前编排重建容器（不 pull、不 build）。改了编排 / 投递了产物后用它生效。
+# 例：应用代码外置的挂载第一次生效 —— 只需重建 frontend-wkj 与 docreader，
+# 而 app 的编排没变 ⇒ 不会重建它 ⇒ **也不会触发数据库迁移**。
+cmd_up()     { preflight_local; sync_code; ensure_env; compose_up up; health_check; }
 
 # ── 应用代码外置：投递命令（配合 overlay 里的 volumes 挂载）
 # 思路：日常改动不必重建镜像 / 容器 —— 编译产物直接落到 111 的映射目录即可。
@@ -672,7 +684,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 
 case "${1:-help}" in
-  deploy|update|build|sync|status|restart|health|down|shell) "cmd_$1" "${@:2}" ;;
+  deploy|update|build|sync|up|status|restart|health|down|shell) "cmd_$1" "${@:2}" ;;
   push-ui)      cmd_push_ui ;;
   push-reader)  cmd_push_reader ;;
   logs)         cmd_logs "${2:-app}" ;;
