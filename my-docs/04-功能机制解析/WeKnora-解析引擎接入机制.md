@@ -200,21 +200,36 @@ flowchart TD
 前置认知：**WeKnora 侧要的只是一个 `/layout-parsing` 形态的端点**。
 只要 110 侧能提供它，**WeKnora 一行代码不用改**。
 
-| 方案 | 110 侧要做的事 | 能处理纯图片 PDF | 输出质量 |
-|---|---|---|---|
-| **A（推荐）** | 起 PP-StructureV3 产线：`paddlex --serve --pipeline PP-StructureV3 --device gpu:0 --port 36742` | ✅ 原生吃 PDF（`fileType=0`） | ★★★ 版面 / 表格 / 阅读顺序 |
-| **B** | 给 36741 加一个 `/layout-parsing` 兼容端点（约 40 行；PDF 还要自己拆页渲染） | ⚠️ 需自行拆页 | ★ 纯文本行 |
-| **C** | 独立写一个协议转换小服务（同 B，只是换个进程） | ⚠️ 需自行拆页 | ★ 纯文本行 |
+| 方案 | 110 侧要做的事 | GPU 显存增量 | 能处理纯图片 PDF | 输出质量 |
+|---|---|---|---|---|
+| **一** | 起 PP-StructureV3 产线：`paddlex --serve --pipeline PP-StructureV3` | ❌ **峰值 17 GB**（V100 官方 benchmark） | ✅ 原生吃 PDF | ★★★ 版面 / 表格 |
+| **二（推荐）** | 给 36741 加一个 `/layout-parsing` 兼容端点（约 40–80 行；PDF 自己拆页） | ✅ **零增量**（复用现有服务） | ✅（自行拆页） | ★ 纯文本行 |
+| **三** | 独立写一个协议转换小服务（同方案二，只是换个进程） | ✅ 零增量 | ✅（自行拆页） | ★ 纯文本行 |
 
-**方案 A 为什么是最优**：
+> 方案一曾被我列为**首选**，理由是「响应字段天然对齐 + PP-StructureV3 的通用 OCR 子产线可挂 PP-OCRv6」。
+> **在「只用 PP-OCRv6、尽量省显存」的约束下这个推荐是错的**，已修正为方案二。
 
-- **响应字段天然对齐** —— WeKnora 读 `layoutParsingResults[].markdown.{text,images}`，
-  PP-StructureV3 官方文档的响应结构**就是这个**（`markdown.text` / `markdown.images` / `isStart` / `isEnd`）；
-- **PP-OCRv6 已经在里面** —— PP-StructureV3 的「通用 OCR 子产线」官方已集成 PP-OCRv6
-  （文档原文：*"General OCR Sub-Pipeline … PP-OCRv6_medium, PP-OCRv5_server"*）
-  ⇒ **既用上 PP-OCRv6，又拿到版面结构**；
-- **原生支持 PDF**，不需要自己拆页；
-- 110 与 WeKnora 的职责干净分离：**OCR 能力留在 110，WeKnora 只当消费方**。
+#### 为什么不推荐方案一 —— 显存账
+
+| | 36741（纯 PP-OCRv6 通用 OCR 产线） | PP-StructureV3 |
+|---|---|---|
+| 显存 | **0.6 ~ 2.0 GB**（110 实测） | **峰值 17.0 GB**（V100）/ 21.8 GB（A100） |
+| 加载的模型 | det + rec（按档） | 再加 RT-DETR-L 版面 + SLANeXt 表格 + PP-FormulaNet-L 公式 + 印章 + 图表 |
+
+**差 8~25 倍。** 为了跑一个子模块而加载整套文档解析管线，不划算。
+
+另两点：
+
+- **默认不保证是 PP-OCRv6**。PP-StructureV3 官方文档的 OCR 模型细节写的是
+  *"please refer to PP-OCRv5 for OCR model details"*；PP-OCRv6 属**可选**模型，
+  要锁定得改 pipeline YAML。
+- **PP-StructureV3 本身不是 VL 路线**（全是传统 CV 模型：RT-DETR-L / PP-OCR / SLANeXt / PP-FormulaNet），
+  但「费显存」这个判断是对的 —— 原因是一堆额外模型，不是 VLM。
+
+#### 方案二的实测优势
+
+包装层是自己写的 ⇒ 那 18 个 PaddleOCR-VL 专有参数**可以直接忽略**，
+**不存在**「服务端是否容忍多余字段」这个未知 —— 而方案一有这个未知。
 
 ### 8.3 本地实测：客户端侧风险已排除
 
@@ -255,21 +270,26 @@ POST /layout-parsing          Content-Type: application/json
 ⇒ **客户端侧无风险**：只要服务端返回 `result.layoutParsingResults[].markdown.text`，
 WeKnora 就能正确落成 markdown。
 
-**仍待对真实服务实测的一点**：请求里那 18 个参数多为 PaddleOCR-VL 专有
-（`promptLabel` / `minPixels` / `restructurePages` …），PP-StructureV3 的 Pydantic 请求模型
-是否容忍多余字段 —— **默认行为是忽略，但未对真实服务验证**。
-其中 `file` / `fileType` / `visualize` 是 PP-StructureV3 官方原生入参，这部分确定没问题。
+**这条实测与选哪条路无关**：无论服务端是 PP-StructureV3 还是自写的兼容端点，
+WeKnora 发的都是这套请求、读的都是 `markdown.text` ⇒ 对方案一、二、三**都成立**。
 
-### 8.4 若坚持直连 36741
+> 若走**方案一**，另有一个未知：那 18 个参数多为 PaddleOCR-VL 专有，PP-StructureV3 的请求模型
+> 是否容忍多余字段（默认行为是忽略，但未对真实服务验证）。
+> **走方案二则没有这个未知** —— 包装层自写，可全部忽略。
 
-需走路线 B（改官方文件），**并且要接受三个能力缩水**：
+### 8.4 下策：在 WeKnora 新增 Go 侧引擎（§七 的路线 B）
 
-- **不能处理 PDF** —— 只接图片（PDF 得另配「渲染成页图再逐页送 OCR」的链路）；
-- **丢失版面结构** —— 纯文本行流，下游分块质量下降；
-- **吞吐冲突** —— 服务端串行 ≈1 张/s + 429 限流，而 WeKnora 的 converter **没有退避重试**。
+即改 `engines.go` / `tenant.go` / `parser_url_security.go` 等官方文件，
+让 WeKnora 直接说 36741 的 multipart 协议。**不推荐**，因为：
 
-**两套服务并行**是更干净的形态：36741 继续做「给人 / 给脚本用的独立 OCR」
-（多档对比、429 退避、结构化日志都做得好），WeKnora 走独立的 PP-StructureV3 产线。
+- **要改官方文件** —— 与「官方文件保持原样」冲突，且这层改动会一直跟着上游更新；
+- **仍不能处理 PDF** —— 36741 只收图片，除非在引擎里再实现 PDF 渲染；
+- **丢失版面结构** —— 纯文本行流；
+- **吞吐冲突** —— 服务端串行 ≈1 张/s + 429 限流，而 WeKnora 侧没有现成的退避重试。
+
+**结论**：同一件事（把 36741 包成 WeKnora 认识的东西），
+**在 110 侧做（方案二）比在 WeKnora 侧做便宜得多** ——
+前者零源码改动、零显存增量；后者要永久背负一层官方文件改动。
 
 ---
 
@@ -284,3 +304,6 @@ WeKnora 就能正确落成 markdown。
    若漏改 `parser_url_security.go`，保存时不报错、解析时静默失败。
 5. **图片 OCR 与解析引擎是两条通道** —— 配置视觉模型不会影响扫描件的解析引擎行为，
    反之亦然。排查「扫描件没出文字」时先确认走的是哪条路，见 §六。
+6. **别为了一个子模块加载整条产线**。PP-OCRv6 是「通用 OCR 产线」的模型；
+   PP-StructureV3 是另一条产线（版面 / 表格 / 公式 / 印章 / 图表），它**可以**挂上 PP-OCRv6，
+   但显存从 ~2 GB 涨到 ~17 GB。选型时按**最小必要管线**算，不要按「谁包含谁」算。
