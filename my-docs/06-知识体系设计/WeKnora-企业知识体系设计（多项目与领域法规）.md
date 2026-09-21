@@ -139,7 +139,76 @@ KB 级批处理会按归一化标题复用同名页**。
 
 ---
 
-## 八、分阶段落地（每一步都可独立验收）
+## 八、多领域引用（一个项目 → 多个领域基线库）
+
+**结论：支持，而且应当把它当默认做法，不是例外。**
+一个财政一体化项目通常同时涉及财政、审计、信息安全（等保 / 密码法）、政务信息化等 **3~6 个领域**。
+
+**机制依据**
+
+| 事实 | 依据 |
+|---|---|
+| 检索请求本身就是**多目标列表** | `internal/types/search.go:24-43`：`SearchTarget`（指向单个 KB）+ `type SearchTargets []*SearchTarget` |
+| 多 KB 会被展开成多个 target | `session_knowledge_qa.go:91` `buildSearchTargets(ctx, tenantID, knowledgeBaseIDs, …)`；`session_agent_qa.go:425` 用 `agentConfig.KnowledgeBases`（**复数**） |
+| API Key 白名单是数组、**无数量上限** | `handler/tenant.go:829` `validateTenantAPIKeyKnowledgeBaseIDs`：逐个校验「存在 + 归属」 |
+
+⇒ 一个项目的检索范围 = `[项目库] + [领域库 1..N]`。
+
+### 三个必须知道的约束
+
+**① 白名单只能引用「同一租户」下的库**
+
+```go
+// internal/handler/tenant.go（validateTenantAPIKeyKnowledgeBaseIDsWithLookup）
+if kb.TenantID != tenantID {
+    return errors.NewForbiddenError("knowledge_base_ids contains a knowledge base outside this workspace")
+}
+```
+
+⇒ 只要 L0 / L1 / L2 都在公司统一租户内，任意组合都可以。
+但**若把某客户隔离到独立租户，该客户的 Key 就无法引用公司统域的基线库**。
+
+> 检索层有 `SearchTarget.TenantID`（注释：*Required for cross-tenant shared KB queries*），
+> 组织层也有 `organizations` 与 `organization_members`（含 `tenant_id`）——
+> 说明存在跨租户共享的方向；但**KB 级的跨租户共享机制尚未核实**，暂按「同租户」设计。
+
+**② 对 KB 受限的 API Key，`tag_ids` 会被拒绝 —— 所以「领域」必须靠库切，不能靠标签**
+
+```go
+// internal/types/tenant_api_key.go：AuthorizeTenantAPIKeyOptionalTagIDs
+// rejects tag_ids for KB-restricted keys
+// because tag resolution can pull documents from arbitrary knowledge bases.
+```
+
+并且 `internal/types/search.go:37` 注释明确 `TagIDs` 是 **KB-local tags**（库内维度）。
+
+⇒ **这反过来证明「多领域必须用多库」**：若想用「一个法规总库 + 领域标签」替代多库，
+在对外集成（API Key 场景）下走不通 —— 标签会被禁。
+
+**③ 去重只发生在 chunk 级别 ⇒ 领域库之间不能重叠**
+
+`knowledgebase_search_fusion.go:65-68` 的 `deduplicateByScore` 是**按 chunk ID 去重**。
+两个库各自收录同一部法律时，它们是**两个不同的 chunk ID** ⇒ **不会去重，会双份命中**，
+在 `top_k` 里互相挤占名额。
+
+⇒ **纪律**：一部法规只归**一个**领域库（定「主归属」）。跨领域共性文件（如《政府采购法》
+既涉财政也涉采购）只放主库，其他领域通过 **Wiki 互链 / 标签**指过去，**不要放副本**。
+
+### 引用关系要显性化（补上第七节说的「反查」缺口）
+
+多领域引用会把「没有引用关系表」这个缺口放大：**没人说得清某项目到底该挂哪几个库**，
+换人接手就失控。解法是在**项目库里放一份「适用范围说明」**（或外部台账）：
+
+```
+本项目适用领域：财政（主）· 审计 · 信息安全
+对应基线库：<kb-id-1>  <kb-id-2>  <kb-id-3>
+登记人 / 日期 / 修订记录
+```
+
+它一次解决三件事：① 配 API Key 时照抄；② 法规修订时按此**反查受影响项目**；
+③ 新人一眼看懂这个项目的「依据边界」在哪。
+
+## 九、分阶段落地（每一步都可独立验收）
 
 | 阶段 | 做什么 | 验收标准 |
 |---|---|---|
@@ -154,7 +223,7 @@ KB 级批处理会按归一化标题复用同名页**。
 
 ---
 
-## 九、附：本文依据索引（可逐条核对）
+## 十、附：本文依据索引（可逐条核对）
 
 | 结论 | 依据 |
 |---|---|
@@ -170,5 +239,10 @@ KB 级批处理会按归一化标题复用同名页**。
 | KB 是权限边界、子资源继承 | `internal/router/rbac.go:92,124-127` |
 | 审计日志 | `audit_logs` 表 |
 | 无「项目」实体 | 迁移中无 `projects` 表 ⇒ 项目须用 KB/Wiki/标签表达 |
+| **多领域引用**：检索请求是多目标列表 | `internal/types/search.go:24-43`（`SearchTarget` + `SearchTargets`）；`session_knowledge_qa.go:91`、`session_agent_qa.go:425` 的 `buildSearchTargets` 收**复数** KB |
+| 白名单只能同租户 | `handler/tenant.go` 的 `validateTenantAPIKeyKnowledgeBaseIDsWithLookup`（`kb.TenantID != tenantID` → Forbidden） |
+| KB 受限的 Key 禁用 `tag_ids` | `internal/types/tenant_api_key.go` `AuthorizeTenantAPIKeyOptionalTagIDs`；`search.go:37` 注释「KB-local tags」 |
+| 去重按 chunk ID（库间重叠会双份命中） | `internal/application/service/knowledgebase_search_fusion.go:65-68` |
+| 组织层可关联多租户 | `000012_organizations.up.sql`（`organization_members.tenant_id`） |
 | 追加原文可补实实体页并产互链 | 本项目实测（预算法实体页 65 → 3548 字符，`source_refs` 1 → 2，自动产出 `[[entity/…]]`） |
 | URL 导入 `.html` 走文件分支 | `my-docs/04-功能机制解析/WeKnora-URL导入双路径与文件命名机制.md` |
