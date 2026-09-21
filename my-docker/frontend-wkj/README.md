@@ -20,6 +20,29 @@ my-docker/frontend-wkj/         独立编排（本目录）：容器名/镜像 t
 
 后端是同一个（`app` 容器）⇒ **两个前端看到的是同一份数据**。
 
+## 部署验收记录（2026-09-21 完成）
+
+| 核对项 | 结果 |
+|---|---|
+| 两个前端容器并行 | `WeKnora-frontend`（41200，Up 17 小时未受影响）与 `WeKnora-frontend-wkj`（41202）同时运行 |
+| 两个镜像 tag 独立 | `weknora-ui` 构建于 `00:33` / `weknora-ui-wkj` 构建于 `17:36` —— 未互相覆盖 |
+| 两个地址都通 | `http://10.168.1.111:41200/` → 200；`http://10.168.1.111:41202/` → 200 |
+| 副本反代到后端成功 | 两边的 `/api/v1/system/info` 均返回 **401**（需登录，行为一致） |
+| compose 项目名独立 | `WeKnora-frontend` → `weknora`；`WeKnora-frontend-wkj` → `weknora-frontend-wkj` |
+| 副本与官方源码零差异 | 111 上 `diff -r frontend my-frontend` 零差异（770:770 文件） |
+| 构建耗时 | 44 秒（`vite build` 21s；npm 走 npmmirror） |
+
+**访问地址**
+
+| | 地址 | 协议 |
+|---|---|---|
+| 官方前端 | `http://10.168.1.111:41200/` | HTTP（另有 `https://10.168.1.111/` 走 TLS 终端反代到 41200） |
+| **定制前端** | **`http://10.168.1.111:41202/`** | 目前**仅 HTTP** |
+
+> ⚠️ 已有 443 TLS 终端（`my-docker/tls/`）只反代到 **41200** ⇒ 定制前端暂无 HTTPS。
+> 若以后要在定制前端上使用 **BrowserSkill 配对**（要求非 localhost 必须 wss），
+> 需要把 TLS 终端也覆盖 41202（改 `my-docker/tls/nginx.conf` 增加一个 server 块或改 proxy_pass）。
+
 ## 二、为什么编排不放进 `my-frontend/`
 
 `my-frontend/` 要一直保持**"能与官方逐字 diff"**的状态：
