@@ -69,6 +69,27 @@ const CONFIGURABLE_ENGINES = new Set(['mineru', 'mineru_cloud', 'paddleocr_vl', 
 > **易错点**：看到 `markitdown` / `opendataloader` 这类**外部产品名**就容易以为「它是个可配的外部服务」。
 > 实际上它们是**被集成进 docreader 的库**。名字像第三方 ≠ 可配地址。
 
+**补充（常被问到）：MarkItDown 上游确实有外部 OCR 能力，但 WeKnora 一条都没启用。**
+
+| 上游通道 | 开启方式 | 接的是什么 |
+|---|---|---|
+| Azure Document Intelligence | `markitdown[az-doc-intel]` + `MarkItDown(docintel_endpoint=…)` | Azure 云 |
+| Azure Content Understanding | `markitdown[az-content-understanding]` + `cu_endpoint=` / `cu_key=` | Azure 云 |
+| `markitdown-ocr` 插件 | `enable_plugins=True` + `llm_client` + `llm_model` | **OpenAI 兼容 VLM** |
+
+WeKnora 侧**四重证据**（可复现）：
+
+1. `docreader/pyproject.toml` 只声明 `markitdown[docx,pdf,xls,xlsx,pptx]` —— **无 `az-*` extra**；
+2. `docreader/parser/markitdown_parser.py` 是 **`MarkItDown()` 无参构造**；
+3. 同文件的 `convert()` 只传 `file_extension` / `keep_data_uris`，无任何外部服务参数；
+4. `grep -rn -i "docintel\|azure\|DocumentIntelligence" docreader/` —— **0 命中**。
+
+⇒ 这也解释了它为什么没有配置抽屉（不在 `CONFIGURABLE_ENGINES`）。
+
+**且这三条都不通 PP-OCRv6**：前两条只接 Azure 云；第三条是 LLM Vision（**＝VLM 路线**）。
+另据实践资料，MarkItDown **不会自动把扫描 PDF 喂给多模态模型**，内置 OCR 只通 Azure ——
+想用别的得自己把 PDF 每页转图，**「自行拆页」是这条路的固有约束**。
+
 ---
 
 ## 四、引擎配置怎么存、怎么传
