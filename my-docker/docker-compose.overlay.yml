@@ -44,7 +44,16 @@
 #     8. app.build.args           +CARGO_REGISTRY_ARG
 #     9. docreader.build.args     APT_MIRROR 默认空 → https://mirrors.tencent.com
 #    10. +service frontend-wkj / +service nginx
-#   ⇒ 用 `./deploy/deploy-wkj-dev.sh compose-diff` 可随时复核。
+#    11. docreader.volumes         +./my-docreader:/app/docreader_ext:ro（PP-OCRv6 定制件）
+#    12. docreader.environment     +PYTHONPATH / PPOCR_BASE_URL / PPOCR_TIERS / PPOCR_FALLBACK
+#   ⇒ 用 `./deploy/deploy-wkj-dev.sh compose-diff` 可随时复核（**仅覆盖 compose 层**）。
+#
+# ★ 官方**源码文件**的改动（compose-diff 看不到，须用 git 比对）：
+#     docreader/parser/markitdown_parser.py —— 加 2 处（定制 import + register_converter），
+#     均带 `★ wkj 定制` 标记。目的：让 markitdown 引擎的 PDF 路径改走 110 的 PP-OCRv6
+#     （扫描件场景，方案与实测见 my-docs/15-docreader定制/）。
+#   ⇒ 列全官方源码改动：`grep -rn "★ wkj 定制" docreader/`
+#   ⇒ 列全官方文件改动面：`git diff --name-status upstream/main..HEAD`
 #
 # ★ 注意：官方 compose 里的 `${FRONTEND_PORT}` 已被第 1 条 `!override` 覆盖，
 #   即 .env 中该变量的旧值（41200）**不再生效**。对外端口以本文件的 nginx 为准。
@@ -233,6 +242,21 @@ services:
     #   ⚠️ 若将来官方把依赖挪进源码目录，此挂载会遮住它 —— 届时须改回镜像内提供。
     volumes:
       - ./docreader:/app/docreader:ro
+      # ★ PP-OCRv6 扫描件 OCR 定制件（自研目录，**不进官方 docreader/**，
+      #   以保证官方目录仍能 diff 出"刻意改动量"）。
+      #   挂到独立路径 + 下面用 PYTHONPATH 注入 —— Dockerfile 原本未设 PYTHONPATH，
+      #   故此处不会覆盖任何既有值（已核对 docker/Dockerfile.docreader）。
+      - ./my-docreader:/app/docreader_ext:ro
+
+    # ★ PP-OCRv6 扫描件 OCR 的配置（见 my-docs/15-docreader定制/）。
+    #   只走环境变量，**不接 parser_engine_overrides** —— 那条链路要改 Go 侧
+    #   tenant.go / parser_url_security.go，与本"少改官方文件"的目标相悖。
+    #   environment 是**列表形式**（与官方一致），compose 按键合并 ⇒ 只写新增项。
+    environment:
+      - PYTHONPATH=/app/docreader_ext
+      - PPOCR_BASE_URL=${PPOCR_BASE_URL:-http://10.168.1.110:36741}
+      - PPOCR_TIERS=${PPOCR_TIERS:-medium}
+      - PPOCR_FALLBACK=${PPOCR_FALLBACK:-true}
 
   # ───────────────────────── 自带搜索（官方已有的**可选**组件，非我们新增）
   # 官方基底已定义 searxng + searxng-init（含 cap_drop 降权，以及用 init 容器把
