@@ -522,28 +522,43 @@ $DC up -d searxng
 # ★ settings.yml 的生效链路有**两个**坑，必须一起防（2026-09-22 实测踩全）：
 #   ① searxng-init（oneshot）只在**被重建**时才把模板拷进命名卷；
 #      而 compose 的 config-hash **只覆盖挂载路径、不含文件内容**
-#      ⇒ 改了 settings.yml 内容时 init 不会被重建，卷里仍是旧文件。
+#      ⇒ 改了内容时 init 可能不重建，卷里仍是旧文件。
 #   ② searxng **只在进程启动时**读 /etc/searxng/settings.yml
-#      ⇒ 卷更新了但不重启进程，同样白搭。
-#   二者合起来的现象是「改了配置毫无变化」。故这里按**内容哈希**判据直接同步 + 重启
-#   （哈希判据天然覆盖"init 被重建"的情形，无需再比时间戳）。
+#      ⇒ 卷更新了但不重启进程，同样白搭（实测：卷与新宿主文件 sha256 完全一致，
+#        但 searxng 仍是 6 分钟前启动的进程，跑的是旧引擎集 ⇒ 搜索 0 结果）。
+#   所以要**分别**判两件事：卷内容对不对、进程是否已加载它。
 SX_HOST_F="$DIR/my-docker/searxng/settings.yml"
 if [ -f "$SX_HOST_F" ]; then
+  # 一次容器调用同时取：卷内文件的 sha256 与 mtime
+  _sx_meta=$(docker run --rm -v weknora_searxng_config:/c busybox:1.36 \
+      sh -c 'sha256sum /c/settings.yml; stat -c %Y /c/settings.yml' 2>/dev/null)
+  _v=$(printf '%s\n' "$_sx_meta" | awk 'NR==1{print $1}')
+  _vt=$(printf '%s\n' "$_sx_meta" | awk 'NR==2{print $1}')
   _h=$(sha256sum "$SX_HOST_F" 2>/dev/null | cut -d' ' -f1)
-  _v=$(docker run --rm -v weknora_searxng_config:/c busybox:1.36 sha256sum /c/settings.yml 2>/dev/null | cut -d' ' -f1)
+
+  # 判据 A：卷内容 vs 宿主内容
   if [ -n "$_h" ] && [ "$_h" != "$_v" ]; then
-    echo "  检测到 settings.yml 内容变化 ⇒ 同步进命名卷并重启 searxng"
-    if docker run --rm \
+    echo "  检测到 settings.yml 内容变化 ⇒ 同步进命名卷"
+    if ! docker run --rm \
          -v weknora_searxng_config:/c \
          -v "$SX_HOST_F":/src/settings.yml:ro \
          busybox:1.36 sh -c 'cp /src/settings.yml /c/settings.yml && chmod 0644 /c/settings.yml' \
          >/dev/null 2>&1; then
-      $DC restart searxng >/dev/null
-      echo "  ✔ 已同步并重启 searxng"
-    else
       echo "  ⚠ 同步失败（busybox:1.36 是否存在于 111？）⇒ searxng 配置可能仍是旧的"
     fi
+    # 同步后 mtime 变了，用"当下"作为基准
+    _vt=$(date +%s)
   fi
+
+  # 判据 B：searxng 进程是否在「卷内文件最后一次修改」之后启动过
+  _st=$(date -d "$(docker inspect WeKnora-searxng --format '{{.State.StartedAt}}' 2>/dev/null)" +%s 2>/dev/null || echo 0)
+  if [ "${_vt:-0}" -gt "${_st:-0}" ]; then
+    echo "  searxng 尚未加载当前 settings.yml（进程启动于文件更新之前）⇒ 重启"
+    $DC restart searxng >/dev/null
+    echo "  ✔ 已重启 searxng"
+  fi
+else
+  echo "  ⚠ 找不到 $SX_HOST_F ⇒ 跳过 searxng 配置同步（searxng 将使用卷中的旧配置）"
 fi
 
 echo ""
