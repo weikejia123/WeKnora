@@ -100,7 +100,50 @@ Go 是编译型语言，容器里跑的是**单个二进制**（`/app/WeKnora`�
 2. 是否给部署脚本加一个子命令（如 `push-ui`：本地 build + rsync + 校验）？
 3. 后端是否也要做"编译后 cp"的快速通道？
 
-## 八、证据
+## 八、应用整体映射的评估（老魏 2026-09-21 提出）
+
+老魏的想法更进一层："**把应用放在映射目录里，容器不用动，只需要把应用映射目录里的文件换了就行**"。
+
+**结论：对前端与 docreader 成立，对 app 不成立** —— 因为"应用"这个词下面藏着三种完全不同的形态。
+
+| 应用 | 形态 | 能否映射替换 | 代价 |
+|---|---|---|---|
+| `frontend` / `frontend-wkj` | **静态文件** | ✅ 最理想 | 无（换文件即生效） |
+| `docreader` | **Python 源码** | ✅ 适用 | 代码在 `/app/docreader/`（`Dockerfile.docreader:157`），依赖装在镜像内 venv（`:147`）⇒ **只换源码、依赖不变时无需重建**。入口 `CMD ["uv","run","-m","docreader.main"]`（`:166`） |
+| `app` | **编译产物**（Go + cgo） | ⚠️ **不推荐** | 见下三个硬障碍 |
+
+### `app` 的三个硬障碍（实测）
+
+1. **有 cgo 且有动态依赖** ⇒ 无法在 Mac 上直接交叉编译。
+   - `go.mod:13` `asg017/sqlite-vec-go-bindings`、`go.mod:241` `mattn/go-sqlite3`（cgo）
+   - `ldd /app/WeKnora` 实测依赖 `libm` / `libstdc++` / `libgcc_s` / `libc` —— **不是静态二进制**
+   - ⇒ 必须在**兼容的 Linux 环境**里编译（容器内编译或 111 上编译）
+2. **架构不同**：本机 arm64，111 是 amd64。本机镜像实测为 `aarch64`（`lib/aarch64-linux-gnu/`），
+   ⇒ 本地产物**不能直接用于 111**。
+3. **体积与重启**：二进制 **259,970,760 B ≈ 248 MiB**，每次传输这个量级；
+   且换完必须 `docker restart`（进程已在内存，不能热替换）。
+
+### 更关键的一点：**编译时间省不掉**
+
+映射替换省掉的是「镜像层导出/导入 + 容器重建」，而 app 的耗时大头是 **Go 编译本身**
+（Rust anydoc / browserskill 又是另外两个阶段）。所以在 app 上做映射，
+收益远小于前端，却要额外承担交叉编译与架构匹配的复杂度。
+
+**建议**：`app` 保持「按镜像增量构建」（`build app && up -d app`）；
+把映射方案的收益集中用在**前端**（老魏二开的主场景）上。
+
+### 附：`app` 容器的启动链（评估时需知）
+
+```dockerfile
+# docker/Dockerfile.app
+WORKDIR /app
+ENTRYPOINT ["./scripts/docker-entrypoint.sh"]   # :214
+CMD ["./WeKnora"]                                # :215
+```
+⇒ 若真要挂载替换，只覆盖 `/app/WeKnora` 一个文件即可，
+`/app/scripts`、`/app/config`、`/app/migrations`、`/app/skills` 仍取镜像内版本。
+
+## 九、证据
 
 - 耗时实测：`my-docs/03-生产部署/WeKnora-生产部署与运维.md:246, :425, :599, :605`
 - 前端分层：`frontend/Dockerfile:38-49, :61`
