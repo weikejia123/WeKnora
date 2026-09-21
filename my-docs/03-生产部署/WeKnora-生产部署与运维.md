@@ -711,9 +711,10 @@ WSS（包括内网）」）。机制与排查详见 `my-docs/04-功能机制解�
       ② **同盘备份只能防误操作**（源与备份同在 `/mnt/data`），防硬件故障需异地副本 —— 老魏已明确**接受这个边界**；
       ③ **动 `app` 前先备份**（`app` 启动即跑迁移，见该文 §2.3）。
       ⬜ 仍缺：用备份集**重建一个在线服务**（属灾难恢复 SOP 演练，与"备份集是否有效"是两个问题）。
-- [x] **✅ searxng 已接入并测通（2026-09-22）**：`--profile searxng` 已进 `$DC`，引擎集
-      = bing（第一优先）+ 360search。SSOT：`my-docs/14-联网搜索/WeKnora-自带搜索SearXNG接入与引擎选型.md`。
-      ⬜ 仍缺：在 **Web 控制台**加 Provider（类型 SearXNG、URL `http://searxng:8080`）—— 需登录。
+- [x] **✅ searxng 全链路已通（2026-09-22）**：`--profile searxng` 已进 `$DC`，引擎集
+      = bing（第一优先）+ 360search；**控制台的 Provider 也已配好**（`SearXNG-Local`、`is_default=true`、
+      `base_url=http://searxng:8080`），UI 点「测试」**返回 1 条结果**（app 日志佐证）。
+      SSOT：`my-docs/14-联网搜索/WeKnora-自带搜索SearXNG接入与引擎选型.md`。
 - [ ] **`ops/hosts/nanning-111/services.md` 待登记**本服务（端口 41200/41201）。
 - [ ] 110 的 Ollama 是单并发槽，若用其做 embedding，需留意与其它调用方的排队冲突。
 - [ ] 111 上的代码克隆会落后于本机（`sync_code` 只在执行脚本时才对齐）——想知道线上是哪一版，直接

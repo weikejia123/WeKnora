@@ -16,7 +16,7 @@
 | 测通了吗 | ✅ 中文查询"政府投资项目" → **15 条**（bing 10 + 360search 5），仅 quark 报 CAPTCHA |
 | 引擎怎么选 | **bing（第一优先，weight 2.0）+ 360search（补充，1.0）**；**搜狗、百度、quark 都不用** |
 | 实测效果 | 中文查询「政府采购」→ **15 条**（bing 10 + 360search 5），**无未响应引擎** |
-| 还需要做什么 | ⬜ 在控制台加 Provider（类型 `SearXNG`、URL `http://searxng:8080`）—— 见 §5 |
+| 控制台 Provider | ✅ **已配置**（2026-09-22 00:52）：`SearXNG-Local`（`is_default=true`、`base_url=http://searxng:8080`），UI 点测 **返回 1 条结果** |
 | 端口 | 宿主 `127.0.0.1:41291`（仅回环、诊断用）；**容器间走 `http://searxng:8080`** |
 
 ---
@@ -106,15 +106,27 @@ engines:
 
 ---
 
-## 五、⬜ 剩余一步：在控制台加 Provider
+## 五、✅ 控制台 Provider（2026-09-22 已完成）
 
 searxng 的接入**不是靠 `.env` 配置**，而是在 **Web 控制台里新增一个 Provider**
-（`.env.example` 的 H1 段即如此说明）。步骤：
+（`.env.example` 的 H1 段即如此说明）。步骤（供重建环境时参考）：
 
-1. 打开定制前端 `https://10.168.1.111:41280/`（或官方前端 `:41200`）并登录
-2. 进入 **网络搜索 / Web Search Provider** 设置
-3. 新增：**类型选 `SearXNG`**，**Instance URL 填 `http://searxng:8080`**
-4. 保存后点「测试」（后端会真的去请求 searxng）
+1. 打开定制前端 `https://10.168.1.111:41280/` → **平台设置 → 网络搜索**
+   （直达路径：`/platform/settings?section=websearch`）并登录
+2. 新增：**类型选 `SearXNG`**，**Instance URL 填 `http://searxng:8080`**
+3. 保存后点「测试」（后端会真的去请求 searxng）
+
+**实测记录（2026-09-22 00:52，老魏在 UI 操作，服务端日志佐证）**：
+
+| 项 | 值 |
+|---|---|
+| Provider 记录 | `name=SearXNG-Local` · `provider=searxng` · `is_default=true` · `parameters={"base_url":"http://searxng:8080"}` · `tenant_id=10000` |
+| UI 点「测试」 | ✅ `{"success":true}`，**返回 1 条结果**（HTTP 200，517ms） |
+| 服务端证据（app 日志） | `[WebSearch][SearXNG] query="test" url=http://searxng:8080` → `returned 1 results` → `[WebSearch][Test] succeeded` |
+| API Key | **不需要**（`credentials.api_key.configured=false`） |
+
+> ★ **这次「测试」才是真正的端到端判据**：请求由 **app 进程**发起、经**容器网络**打到 searxng、
+> 并**真的解析出结果**。相比"容器起来了""接口返回 200"，它才证明整条链路可用。
 
 > 为什么 URL 用 `http://searxng:8080` 而不是宿主 `127.0.0.1:41291`：
 > Provider 的请求由 **app 容器**发出，走的是**容器网络**（Docker DNS 解析服务名）；

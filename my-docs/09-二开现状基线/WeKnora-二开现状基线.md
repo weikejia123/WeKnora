@@ -111,7 +111,7 @@
 | §四 **`my-frontend/` 66 项差异、判据失效** | ✅ **已解决** —— 副本已同步至 `cc82e75c`，`diff -rq frontend my-frontend` **归零**。★ 纪律：**每次上游同步后必须跟一次副本同步**，否则判据再次失效 |
 | §六.1 前端副本同步 | ✅ 已完成（见上一行） |
 | §六.2 副本复制点占位符为空 | ✅ 已填 `cc82e75c`（记载于 `my-docker/README.md`） |
-| §六.3 **searxng 尚未动手** | ✅ **已接入并测通**（2026-09-22）：`--profile searxng` 已进 `$DC`（单点覆盖全部子命令），引擎集 = **bing（第一优先）+ 360search**。SSOT：`my-docs/14-联网搜索/WeKnora-自带搜索SearXNG接入与引擎选型.md`。⬜ 仅剩控制台加 Provider |
+| §六.3 **searxng 尚未动手** | ✅ **全链路已通**（2026-09-22）：`--profile searxng` 已进 `$DC`（单点覆盖全部子命令）、引擎集 = **bing（第一优先）+ 360search**、**控制台 Provider 已配**（`SearXNG-Local`，UI 点测返回 1 条结果）。SSOT：`my-docs/14-联网搜索/` |
 | §六.4 `41200–41299` 分配规律 | ⬜ **仍未明确** —— 老魏指定了 `41291`（**跳号，非顺延**）⇒ 新增端口前先看实际占用，或直接问 |
 | §二 改动面（789 新增 / 2 修改，领先上游 42） | 数字已变（提交持续增加）。**「官方文件只改 2 个（两个 Dockerfile）」这条仍然成立** —— 核对口径 `git diff --name-status upstream/main..HEAD` |
 | §三 资产规模（`my-docs` 12 文件 / 8 目录，`my-docker` 5 文件） | 已增长：`my-docs` **15 文件 / 14 目录**；`my-docker` 增加 `searxng/settings.yml`、`Dockerfile.app-builder`、`nginx/`、`README.md` |
