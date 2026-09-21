@@ -519,16 +519,31 @@ $DC up -d frontend frontend-wkj nginx
 echo "  启动自带搜索（searxng）..."
 $DC up -d searxng
 
-# ★ 关键：settings.yml 由 searxng-init（oneshot）投递到命名卷，而 searxng **只在进程
-#   启动时**读 /etc/searxng/settings.yml ⇒ 若 init 刚被重建、searxng 却没跟着重启，
-#   新配置**根本不会生效**（2026-09-22 实测踩到：卷里已是新文件，搜索仍按旧引擎清单跑，
-#   表现为"改了配置毫无变化"）。compose 不会因为 oneshot 依赖被重建而重启下游服务。
-#   判据：直接比较两个容器的 ISO 时间戳（同格式 ⇒ 字符串比较即可）。
-_sx_init_t=$(docker inspect WeKnora-searxng-init --format '{{.Created}}' 2>/dev/null || true)
-_sx_run_t=$(docker inspect WeKnora-searxng --format '{{.State.StartedAt}}' 2>/dev/null || true)
-if [ -n "$_sx_init_t" ] && [ -n "$_sx_run_t" ] && [[ "$_sx_init_t" > "$_sx_run_t" ]]; then
-  echo "  searxng-init 比 searxng 新 ⇒ 重启 searxng 让新 settings.yml 生效"
-  $DC restart searxng >/dev/null
+# ★ settings.yml 的生效链路有**两个**坑，必须一起防（2026-09-22 实测踩全）：
+#   ① searxng-init（oneshot）只在**被重建**时才把模板拷进命名卷；
+#      而 compose 的 config-hash **只覆盖挂载路径、不含文件内容**
+#      ⇒ 改了 settings.yml 内容时 init 不会被重建，卷里仍是旧文件。
+#   ② searxng **只在进程启动时**读 /etc/searxng/settings.yml
+#      ⇒ 卷更新了但不重启进程，同样白搭。
+#   二者合起来的现象是「改了配置毫无变化」。故这里按**内容哈希**判据直接同步 + 重启
+#   （哈希判据天然覆盖"init 被重建"的情形，无需再比时间戳）。
+SX_HOST_F="$DIR/my-docker/searxng/settings.yml"
+if [ -f "$SX_HOST_F" ]; then
+  _h=$(sha256sum "$SX_HOST_F" 2>/dev/null | cut -d' ' -f1)
+  _v=$(docker run --rm -v weknora_searxng_config:/c busybox:1.36 sha256sum /c/settings.yml 2>/dev/null | cut -d' ' -f1)
+  if [ -n "$_h" ] && [ "$_h" != "$_v" ]; then
+    echo "  检测到 settings.yml 内容变化 ⇒ 同步进命名卷并重启 searxng"
+    if docker run --rm \
+         -v weknora_searxng_config:/c \
+         -v "$SX_HOST_F":/src/settings.yml:ro \
+         busybox:1.36 sh -c 'cp /src/settings.yml /c/settings.yml && chmod 0644 /c/settings.yml' \
+         >/dev/null 2>&1; then
+      $DC restart searxng >/dev/null
+      echo "  ✔ 已同步并重启 searxng"
+    else
+      echo "  ⚠ 同步失败（busybox:1.36 是否存在于 111？）⇒ searxng 配置可能仍是旧的"
+    fi
+  fi
 fi
 
 echo ""
