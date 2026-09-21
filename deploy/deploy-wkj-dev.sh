@@ -13,6 +13,7 @@
 # 用法：
 #   ./deploy-wkj-dev.sh deploy      首次部署 / 完整部署（幂等，可重复执行）
 #   ./deploy-wkj-dev.sh update      更新：推代码 → 拉取 → 重建容器
+#   ./deploy-wkj-dev.sh sync        只同步代码到 111（**不碰容器**，故不触发 DB 自动迁移）
 #   ./deploy-wkj-dev.sh build       二开构建：在 111 上构建镜像后重启
 #   ./deploy-wkj-dev.sh status      查看容器状态
 #   ./deploy-wkj-dev.sh logs [svc]  查看日志（默认 app）
@@ -543,6 +544,10 @@ health_check() {
 # ------------------------------------------------------------------ 子命令
 cmd_deploy() { preflight_local; preflight_remote; sync_code; ensure_env; compose_up pull; health_check; }
 cmd_update() { preflight_local; sync_code; ensure_env; compose_up pull; health_check; }
+# 只同步代码，不碰容器。用于「改了脚本 / 文档，但不想让容器重建」的场景 ——
+# 重建 app 容器会触发数据库自动迁移（AUTO_MIGRATE 默认开且失败不阻断），
+# 详见 my-docs/11-数据安全与备份/WeKnora-数据安全与备份方案.md §2.3。
+cmd_sync()   { preflight_local; sync_code; }
 cmd_build()  { preflight_local; sync_code; ensure_env; compose_up build; health_check; }
 
 cmd_status() {
@@ -614,14 +619,16 @@ REMOTE_DIFF
 
 cmd_shell() { ssh -t "$SSH_HOST" "cd $REMOTE_DIR 2>/dev/null; exec bash -l"; }
 
-cmd_help() { sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; }
+# 用文件头注释作为帮助。刻意不写死行号（如 '2,39p'）—— 那样会在注释增删后
+# **静默截断** help 输出（原先就漏掉了末尾 4 条「设计原则」）。
+cmd_help() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
 # ------------------------------------------------------------------ 入口
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 
 case "${1:-help}" in
-  deploy|update|build|status|restart|health|down|shell) "cmd_$1" "${@:2}" ;;
+  deploy|update|build|sync|status|restart|health|down|shell) "cmd_$1" "${@:2}" ;;
   logs)         cmd_logs "${2:-app}" ;;
   compose-diff) cmd_compose_diff ;;
   help|-h|--help) cmd_help ;;
