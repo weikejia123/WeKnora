@@ -119,3 +119,4 @@ diff -r frontend my-frontend
 | **本编排不管 app** | 跨编排无法声明 `depends_on`，启动前自行确认 app 在跑 |
 | **运行时可配只有 4 项** | `MAX_FILE_SIZE_MB` / `MAX_SKILL_BUNDLE_SIZE_MB` / `DEFAULT_LOCALE`（+ `EMBED_BASE_URL` 在 `public/config.js`），其余改动都要动源码 |
 | **`package.json.md5` 是失效文件** | 记录值（`a8c281…`）与当前 `package.json`（`de4d3b71…`）不符；全仓无引用、且被 `.dockerignore` 排除 ⇒ 不影响构建。保留它只为与官方保持一致 |
+| **副本的 `.dockerignore` 需要 `git add -f`** | 根 `.gitignore:2` 有 `.*` 规则会忽略点开头的文件；官方 `frontend/.dockerignore` 因**早已被跟踪**而豁免，副本是新文件 ⇒ 会被拦下，导致 111 上**没有 `.dockerignore`**（Docker 只在 context 根找它，不会向上找）。已用 `git add -f` 纳入。<br>★ 以后在副本里新增任何 dotfile（如 `.env.example`），同样要 `-f`；或者你决定允许改官方 `.gitignore` 时，加一条 `!my-frontend/.*` 更省事 |
