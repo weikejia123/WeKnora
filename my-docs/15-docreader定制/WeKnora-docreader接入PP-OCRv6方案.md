@@ -94,15 +94,23 @@ class PPOCRConverter(DocumentConverter):
         return DocumentConverterResult(text_content="\n\n".join(texts))
 ```
 
-**必须处理的四件事**：
+**必须处理的五件事**：
 
 1. **串行 + 429 退避**。110 是串行 ≈1 张/s；`parser_worker_limit("markitdown", …)`
    只管「同时几个文档」，**管不住「一篇文档内的多页」** ⇒ converter 内部自己串行。
-2. **页图渲染参数**。DPI / 长边要落在 110 的限制内（最长边 ≤4096px、单图 ≤20MB）。
+2. **★ 页图渲染参数直接沿用 docreader builtin 的值** ——
+   **DPI 200 / JPEG 质量 85 / 长边 ≤2000px**（即 `DOCREADER_PDF_RENDER_DPI` /
+   `DOCREADER_PDF_JPEG_QUALITY` / `DOCREADER_PDF_RENDER_MAX_EDGE` 的默认值）。
+   这是官方调好的平衡点；**自己定低了 OCR 准确率会直接掉**。
+   2000px 也远落在 110 的限制内（最长边 ≤4096px）。
 3. **忽略 `keep_data_uris`**。WeKnora 会分别以 `True` / `False` 调两次（第二次是重试），
    converter 要能安全接受并忽略该 kwarg。
 4. **回落**。连不上 110 时（`PPOCR_FALLBACK=true`）退给内置 PDF 转换器，
    避免 110 一挂就整条解析失败。
+5. **★ 结构补偿（质量关键，见 §五.⑥）** —— 纯 OCR 只给文本行，markdown 里没有标题层级，
+   会让下游 chunker 的 heading 策略失效、退化为按长度切。
+   建议请求 110 时开 **`include_boxes=true`**，用行坐标做轻量重组：
+   按 y 聚类成段落、按 x 与行高推断层级。**这是把「结构质量」找回来的主要手段。**
 
 ---
 
@@ -135,6 +143,25 @@ Go 侧 `docreader_call_timeout`。**大 PDF 有超时风险**，需按实际文�
 **⑤ 110 会成为 docreader 的硬依赖**
 改完后 `markitdown` 引擎处理 PDF 必须能连到 110。**所以 §三 的 `PPOCR_FALLBACK` 建议保持开启**，
 否则 110 一挂，这批文档全部解析失败。
+
+**⑥ 质量要分两个维度看，其中一个会退化**（选型判据的核心）
+
+| 维度 | 变化 | 原因 |
+|---|---|---|
+| **字级识别** | **↑** | PP-OCRv6 检测 86.2 / 识别 83.2，评测领先 |
+| **文档结构** | **↓ 有退化风险** | 纯 OCR 只给文本行 |
+
+原因有代码依据：builtin 路径交给 VLM 的 prompt 是
+*"extract all text **and layout structure** … output in pure Markdown format"*
+（`image_multimodal.go` 的 `vlmOCRScannedPDFPrompt`）⇒ **VLM 会尝试组织出标题与段落**；
+而 PP-OCRv6 通用产线只给文本行 ⇒ markdown 无 `#` 层级
+⇒ 下游 chunker 的 heading 策略失效、退化为按长度切。
+
+**两条对策**：① 渲染参数沿用 docreader 的值（§四.2，别让字准掉下来）；
+② 开 `include_boxes=true` 用坐标做段落/层级重组（§四.5）。
+
+> 若某批文档**结构比字准更重要**（例如表格密集的报表），可对该批仍走 `builtin` ——
+> KB 的解析引擎规则是**按文件类型**配的，但也可以按库分开建。
 
 ---
 
