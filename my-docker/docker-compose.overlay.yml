@@ -111,7 +111,8 @@ services:
   # ──────────────────────────────────────────────── 接入层（HTTPS/WSS 入口）
   # 两个前端的统一入口。配置资产在 my-docker/nginx/（nginx.conf、gen-certs.sh、README）。
   # 为什么需要它：BrowserSkill 配对要求非 localhost 必须走 wss
-  #   —— internal/browserskill/manager.go:178-190；上游 .env.example:779
+  #   —— internal/browserskill/manager.go 的 WSS 校验；上游 .env.example 的
+  #      BROWSERSKILL_PUBLIC_URL 段（同样刻意不写行号，理由见下方 app 段注释）
   #   「远程部署必须使用 WSS（包括内网）」。
   nginx:
     image: nginx:1.30.3-alpine
@@ -156,9 +157,11 @@ services:
         - GOSUMDB_ARG=${GOSUMDB_ARG:-off}
         # 注入构建版本 → 二进制内嵌 commit，可经 GET /api/v1/system/info 的
         # commit_id 查证"111 上跑的到底是哪一版"（不必再用日志行号反推）。
-        # 生效链路：这些 ARG 在 builder 阶段设成 ENV（Dockerfile.app:59-61）
-        #   → Makefile:256-259 的 COMMIT_ID=${COMMIT_ID:-unknown} 从环境变量取
-        #   → ldflags -X ...handler.CommitID 写入二进制（Makefile:262）。
+        # 生效链路：这些 ARG 在 builder 阶段由 ARG 转成 ENV（见 Dockerfile.app 的 builder 段）
+        #   → Makefile 里 COMMIT_ID 的赋值段取 `${COMMIT_ID:-unknown}`
+        #   → 同段 LDFLAGS 的 `-X ...handler.CommitID` 写入二进制。
+        # 注：此处刻意**不写行号** —— 行号会随上游插行而静默失效（2026-09-21 合并时
+        #     实测 3 处引用全偏），改用段名定位。
         # 注意 .dockerignore 排除了 .git/ ⇒ VERSION 的 git describe 必然失败，
         # 只能靠 VERSION_ARG 兜底，所以必须传。值由部署脚本按当前 git 状态注入。
         - VERSION_ARG=${WKJ_BUILD_VERSION:-unknown}
