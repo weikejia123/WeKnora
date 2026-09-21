@@ -29,6 +29,7 @@
 #     41200  → nginx → 官方前端
 #     41280  → nginx → 定制前端
 #     41201  → app（后端 API，仍是 http，未纳入 TLS）
+#     41291  → searxng（自带搜索；**仅绑回环**，且需 --profile searxng 才启动）
 #   两个前端容器本身**只绑宿主回环** 14100 / 14102（仅供诊断），对外一律经 nginx。
 #   ⇒ "没有 http 前端端口"是结构上的事实，不是约定。
 #
@@ -199,3 +200,18 @@ services:
         # （protoc 另有更优路径：预置到 packages/ 走 Dockerfile 自带离线分支，
         #   由部署脚本 _ensure_build_artifacts 处理）
         - GH_PROXY=${GH_PROXY:-https://gh-proxy.com/}
+
+  # ───────────────────────── 自带搜索（官方已有的**可选**组件，非我们新增）
+  # 官方基底已定义 searxng + searxng-init（含 cap_drop 降权，以及用 init 容器把
+  # settings.yml 模板拷进命名卷、以避免密钥被写回工作区）。本段**只做一件事**：
+  # 把宿主端口挪进我们的容器组号段（41200-41299，见 README 端口表）。
+  #
+  # ★ 下面两行的 `:-41291` 必须同步改 —— compose 的变量插值无法跨字段共享默认值。
+  # ★ 本段**不声明 profiles** ⇒ 继承基底的 `[searxng, full]`，即
+  #   **仍需 `--profile searxng` 才会启动**，不会因为写进本文件就变成无条件启动。
+  # ★ 该端口只影响宿主侧诊断；容器之间访问走容器网络 `http://searxng:8080`，与此无关。
+  searxng:
+    ports: !override
+      - "${SEARXNG_BIND:-127.0.0.1}:${SEARXNG_PORT:-41291}:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:${SEARXNG_PORT:-41291}/
