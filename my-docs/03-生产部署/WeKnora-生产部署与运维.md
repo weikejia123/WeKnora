@@ -214,14 +214,9 @@
 > | 改动文件数（按目录） | `internal` 1704 / `frontend` 1118 / **`migrations` 63** / `config` 38 / `docreader` 6 |
 >
 > ⇒ 这是一次**跨 185 个提交的版本升级**，启动时会执行 `AUTO_MIGRATE` 跑 63 个迁移文件。
-> **数据不会被清**（迁移是增量演进），但表结构会变 —— 因此每次 build 前都应先备份：
->
-> ```bash
-> ssh nanning-111 "cd /mnt/data/weknora && DBPW=\$(grep -m1 '^DB_PASSWORD=' .env | cut -d= -f2-) && \
->   mkdir -p /mnt/data/backups/weknora && \
->   docker exec -e PGPASSWORD=\$DBPW WeKnora-postgres pg_dump -U postgres -d WeKnora -Fc \
->   > /mnt/data/backups/weknora/pre-build-\$(date +%Y%m%d-%H%M%S).dump"
-> ```
+> **数据不会被清**（迁移是增量演进），但表结构会变 —— 因此每次 build 前都应先备份。
+> **完整方案与命令见 `my-docs/11-数据安全与备份/WeKnora-数据安全与备份方案.md`（§3.6）**，
+> 该文是「备份与数据安全」话题的唯一事实来源，此处不再重复命令。
 >
 > `docreader` 那 6 个文件是 **SSRF 代理 + `web_parser.py`**（安全相关，且正是"导入 URL"
 > 用到的组件）⇒ **不能跳过构建 docreader**。所幸 **proto 未变**，gRPC 契约兼容。
@@ -667,7 +662,10 @@ WSS（包括内网）」）。机制与排查详见 `my-docs/04-功能机制解�
       耗时 15m57s。二进制内注入的 commit = `87bf42e4` = 111 上 `wkj-dev` 的 HEAD；
       迁移 `90 → 106`（`dirty=false`）；数据与基线逐项一致。详见 §5.5。
 - [ ] **首次部署后建议做的加固**：把 `DISABLE_REGISTRATION` 改为 `true`（注册完管理员账号之后）。
-- [ ] **备份策略**：目前数据只在 111 单机机械盘，`/mnt/data` 无备份。数据库（`weknora_postgres-data` 卷）应纳入备份。
+- [ ] **备份策略**：方案已成文（`11-数据安全与备份/WeKnora-数据安全与备份方案.md`），**尚未实施**。
+      三个关键点：① 备份集**必须含 `.env`**（含 `SYSTEM_AES_KEY`，否则库内密文字段静默失效）；
+      ② **同盘备份只能防误操作**，数据与备份同在 `/mnt/data`，防硬件故障需异地副本（目标待定）；
+      ③ 备份应做成脚本并在动 `app` 前触发（`app` 启动即跑迁移，见该文 §2.3）。
 - [ ] **`ops/hosts/nanning-111/services.md` 待登记**本服务（端口 41200/41201）。
 - [ ] 110 的 Ollama 是单并发槽，若用其做 embedding，需留意与其它调用方的排队冲突。
 - [ ] 111 上的代码克隆会落后于本机（`sync_code` 只在执行脚本时才对齐）——想知道线上是哪一版，直接

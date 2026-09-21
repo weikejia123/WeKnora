@@ -449,6 +449,10 @@ docker volume ls | grep weknora
 
 要备份就备份这几个卷（重点是 `weknora_postgres-data` 和 `weknora_data-files`）。
 
+★ **完整备份方案见 `my-docs/11-数据安全与备份/WeKnora-数据安全与备份方案.md`**（命令见其 §3.6）。
+除这两个卷外，**`.env` 也必须备份** —— 它含 `SYSTEM_AES_KEY`（解密库内敏感字段的密钥），
+丢了会导致这些字段**静默失效**（服务不报错，但功能不可用）。
+
 ---
 
 ## 八、附录：本次部署做了什么改动
