@@ -226,3 +226,86 @@
 - **`use_table_orientation_classify`（默认开）**：先校正 90/180/270 度旋转的表格再识别；
 - **69.65% 是「结构识别」指标**，不等于最终表格可用率。**有线表（我们这类公文表格多为有线）
   表现明显优于无线表** ⇒ 这是选 `SLANeXt_wired` 的理由。
+
+---
+
+## 七、★ 重新评估 PP-StructureV3（2026-09-22 订正 —— §二 的排除结论过于绝对）
+
+> 起因：老魏指出应重新考虑 PP-StructureV3 并给出官方文档。核对该文档后，
+> **§二 中「峰值 17 GB ⇒ 物理装不下」的排除理由不成立，须订正。**
+
+### 7.1 订正：漏了三件事
+
+1. **官方基准里 `default` 配置在 T4 上是 13.6 GB**（17 GB 是更早来源的数字，非此处基准）；
+2. 官方提供 **`PP_StructureV3-lightweight` 变体 —— 峰值仅 7.3 GB**（A100 实测）；
+3. **子模块可独立开关** —— 其中**公式识别对本场景完全无用**，关掉即可省显存。
+
+官方原文：*"默认配置可能会占用超过 16 GB 的显存…**若需减少显存占用，可参考下文说明修改
+配置文件，关闭不必要的功能。**"*
+
+### 7.2 子模块开关（`use_xxx`）与本场景取舍
+
+| 子模块 | 参数 | 产线初始化默认 | 我们的取舍 |
+|---|---|---|---|
+| 版面区域分析 | `use_region_detection` | True（必选） | ✅ 要 |
+| 通用 OCR | `use_general_ocr` | True（必选） | ✅ 要（内含 PP-OCRv6） |
+| 文档方向分类 | `use_doc_orientation_classify` | True | ✅ 建议开（扫描件） |
+| 文档扭曲矫正 | `use_doc_unwarping` | True | ✅ 建议开（UVDoc） |
+| 文本行方向分类 | `use_textline_orientation` | True | ⭕ 可选 |
+| 表格识别 | `use_table_recognition` | True | ✅ **要** |
+| **公式识别** | `use_formula_recognition` | True | ❌ **关掉**（场景无用） |
+| 印章识别 | `use_seal_recognition` | False | ❌ 保持关 |
+| 图表识别 | `use_chart_recognition` | False | ❌ 保持关 |
+
+官方另提供预设变体：`-notable`（关表格）/ `-noformula`（关公式）/ **`-lightweight`（全部换最轻模型）**。
+
+### 7.3 显存账（官方基准，供参照）
+
+| 配置 | 硬件 | 峰值设备内存 |
+|---|---|---|
+| `PP_StructureV3-default` | A100 | 37.4 GB |
+| `PP_StructureV3-default` | **T4** | **13.6 GB** |
+| `PP_StructureV3-lightweight` | A100 | **7.3 GB** |
+
+110 现状：RTX 3060 **12 GB、空闲 6.2 GB**（Ollama 常驻 4.3 GB）
+⇒ **裁剪（去公式）+ lightweight 后有希望，但必须腾显存**（或让 Ollama 按需加载）。
+**真实数字必须在 3060 上实测** —— 官方数字来自 A100 / T4，不可直接外推。
+
+### 7.4 为什么这条路「最好」（前两条是决定性的）
+
+1. ★★ **协议天然匹配 ⇒ 零代码接入**：WeKnora 的 `paddleocr_vl` 引擎发的就是
+   `POST /layout-parsing`，读的正是 `layoutParsingResults[].markdown.{text,images}`
+   —— 与 PP-StructureV3 的服务化接口**完全一致**（这一点早先已核实过）。
+2. ★★ **输出即所需**：`parsing_res_list` 直接给出 `block_bbox` / `block_label`
+   （`text` / `doc_title` / `paragraph_title` / `table` …）/ `block_content` /
+   **`block_order`（阅读顺序）** ⇒ 结构、文字、顺序**一次到位**。
+   这比自研「让 LLM 输出标签」可靠得多（专用模型 + 无幻觉）。
+3. **一个容器解决全部**：版面 + OCR + 表格 + 预处理（UVDoc / 方向分类）自带，
+   不必像 §6.3 那样逐个加模块。
+
+### 7.5 ⚠️ 两个必须处理的坑
+
+1. ★★ **默认只处理前 10 页**！官方原文：*"默认对于超过 10 页的 PDF 或多页 TIFF，**仅处理前 10 页**"*
+   ⇒ 必须在产线配置里加：
+   ```yaml
+   Serving:
+     extra:
+       max_num_input_imgs: null
+   ```
+   （我们那份样本是 **38 页** —— 不改这个，后 28 页会被**静默丢弃**，且不会报错。）
+2. **镜像 CUDA 版本要匹配 110 的驱动**：官方示例镜像是
+   `...paddle:3.1.0-gpu-cuda11.8-cudnn8.9`，而 110 现有 OCR 服务跑在
+   `paddle_cuda 12.6 / cudnn 9.5.1` ⇒ 需选定匹配版本后再部署，避免驱动不兼容。
+
+### 7.6 代价（要说清）
+
+- 我们这几轮的 converter 与 36741 服务，在「扫描件 PDF」场景会**冗余**
+  （但其「单图 OCR / 多档对比 / 429 退避」仍可服务其它用途）；
+- 需腾出 GPU 显存（当前空闲 6.2 GB 不够，要先确认能腾多少）；
+- 综合精度仍低于 VLM 端到端（资源低一个量级）；表格结构精度约 69.65%（有线表更好）。
+
+### 7.7 建议的下一步（先验证，再部署）
+
+**先做一次显存可行性验证**（不落正式部署）：在 110 上起容器 → 加载
+「去公式 + lightweight」配置 → 用一页样本跑通 → **记录峰值显存与单页耗时**。
+数据达标再谈正式部署。**否则可能白折腾一轮。**
