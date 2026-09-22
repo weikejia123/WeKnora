@@ -12,9 +12,15 @@
 | **`frontend-wkj`** | ✅ 已上线 | `push-ui`（本地构建 → 投递） | 分钟级，**无需重启** |
 | **`docreader`** | ✅ 已上线 | `push-reader`（同步源码 → 重启） | **秒级** |
 | **`app`**（后端 Go） | ✅ **已上线**（2026-09-22） | `push-app`（编译镜像编译 → 重启） | **15.7s**（热缓存）／2m02s（首次） |
+| **`migrations`**（数据库迁移文件） | ✅ **已上线**（2026-09-22） | 随 `sync` 自动更新；**一次 `push-app` 即生效** | 0（无独立动作） |
 
-**一句话**：三层应用代码都已从镜像里搬出来，**镜像只承担「运行环境」职责**。
+**一句话**：四层应用代码都已从镜像里搬出来，**镜像只承担「运行环境」职责**。
 ⇒ 只有依赖清单（`go.mod` / `requirements.txt` / `package.json`）或基础镜像变化时，才需要重建镜像。
+
+**迁移为什么也算"应用代码"**：它和二进制是同一次代码变更的两个产物（改表结构必须配套改代码）。
+之前只有二进制外置，导致**官方新迁移永远不生效**（容器内迁移文件来自镜像），
+2026-09-22 实测踩到：容器停在 `000108`、代码已含 `000109`，而新代码的 `Session`
+模型直接读该列 ⇒ **所有会话查询会报 `column does not exist`**。外置后两者同步。
 
 **关键澄清**：111 宿主上**不能**用来产出后端二进制 —— 见 §5（这是"用编译镜像"而非"宿主编译"的原因）。
 
@@ -25,20 +31,25 @@
 | 步骤 | 命令 | 状态 |
 |---|---|---|
 | 1. 推代码 | `git push gitea110 wkj-dev` | ✅ 有 |
-| 2. 111 拉取 | `deploy-wkj-dev.sh sync` | ✅ 有 |
-| 3. 编译 | 前端：本地 `npm run build`；后端：111 上的**编译镜像**；docreader：免编译 | ✅ 有 |
-| 4. 投递 | `push-ui` / `push-app` / `push-reader` | ✅ 有 |
-| 5. 生效 | 前端**无需重启**；app / docreader `restart` | ✅ 有 |
+| 2. 111 拉取 | `deploy-wkj-dev.sh sync` | ✅ 有（**迁移文件也在此步到位**） |
+| 3. 编译 | 前端：本地 `npm run build`；后端：111 上的**编译镜像**；docreader / 迁移：免编译 | ✅ 有 |
+| 4. 投递 | `push-ui` / `push-app` / `push-reader` | ✅ 有（`push-app` 同时覆盖二进制与迁移） |
+| 5. 生效 | 前端**无需重启**；app / docreader `restart`（**新迁移在此刻执行**） | ✅ 有 |
 
 **我们用的"映射目录"不是新建的——就是仓库本身**：
 111 上本就有完整 git 仓库，`sync` 已把"push → 110 → 111 拉取"铺好，
-产物直接落仓库的 **gitignore 目录**即可（`my-frontend/dist`、`.build/` 均已被忽略 ⇒ `git reset --hard` 不会动它）。
+产物直接落仓库里的目录即可。两类来源要分清：
+
+| 挂载源 | 性质 | 谁更新它 |
+|---|---|---|
+| `docreader/`、`migrations/` | **受 git 管理**的仓库内容 | `sync` 的 `git reset --hard` |
+| `my-frontend/dist`、`.build/` | **本地产物**（已被 gitignore ⇒ `reset` 不会动它） | `push-ui` / `push-app` 投递 |
 
 ---
 
 ## 二、落地方式
 
-### 2.1 overlay 三处挂载
+### 2.1 overlay 四处挂载
 
 ```yaml
   frontend-wkj:
@@ -50,6 +61,7 @@
   app:
     volumes:
       - ./.build/WeKnora:/app/WeKnora:ro              # ★ 单文件挂载
+      - ./migrations:/app/migrations:ro               # ★ 与二进制同一次代码变更的产物
 ```
 
 | 要点 | 原因 |
@@ -58,19 +70,29 @@
 | docreader 可以 `:ro` | 依赖在 `/app/.venv`，与源码目录 `/app/docreader` **分开**（`Dockerfile.docreader` 的 `VIRTUAL_ENV`）⇒ 挂源码不遮依赖 |
 | 前端挂载后**无需重启** | 内层 nginx 直接读文件 ⇒ 投递即生效 |
 | app 是**单文件**挂载 | ★ 宿主文件**必须已存在**，否则 Docker 会创建同名**目录** ⇒ ENTRYPOINT 直接失败（首次启用顺序见 §6.3） |
+| 迁移挂载点为什么是 `/app/migrations` | 迁移器读的是**相对路径** `file://migrations/versioned`（`internal/database/migration.go` 的 `RunMigrationsWithOptions`），相对容器 `WORKDIR /app` ⇒ 无需任何配置项 |
+| 迁移可以 `:ro` | app 只**读**迁移文件、只**写**数据库 ⇒ 只读足够 |
+| 迁移**不需要独立投递动作** | 它是仓库内容 ⇒ 跟着 `sync` 的 `git reset` 一起到位（与二进制不同） |
 
 ### 2.2 投递命令（`deploy/deploy-wkj-dev.sh`）
 
 | 命令 | 做什么 |
 |---|---|
 | `push-ui` | 本地 `npm run build`（显式注入 `VITE_FRONTEND_COMMIT`）→ `rsync dist` → 立即可见 |
-| `push-app` | 111 上用**编译镜像**编译（含 anydoc 静态库）→ 落 `.build/WeKnora` → 重启 app |
+| `push-app` | 111 上用**编译镜像**编译（含 anydoc 静态库）→ 落 `.build/WeKnora` → 重启 app。★ 一次动作同时更新**两样外置件**：二进制 + 迁移文件（后者由 `sync_code` 带来） |
 | `push-reader` | `sync_code` + `restart docreader` |
 | `up` | **只按当前编排重建容器**（不 pull / 不 build）—— 让编排改动生效 |
 
 **`up` 为什么必需**：改编排后要让它生效，但原有三个子命令都绕不开镜像操作 ——
 `update` 检测到本地构建镜像会**自动改走 build**（16 分钟），`build` 更慢，
 `sync` 又不重建容器。`up` 模式下 compose 只重建 **config-hash 真正变了**的服务。
+
+> ★★ **所有"让改动生效"的前提都是「改动已提交并推送」** —— 因为 `sync_code` 的第一步是
+> `git push gitea110`，再把 111 的仓库 `reset` 到该提交。**未提交的改动传不过去**：
+> 编排看起来没变 ⇒ compose 判定"无需重建" ⇒ 打印一片 `Running`、部署"成功"，
+> 而挂载/配置实际是旧的。这个坑静默且伪装成成功（2026-09-22 实测：改完 overlay 直接
+> 跑 `up`，输出全绿但 app 未重建，容器内迁移文件仍是 `000108`）。
+> ⇒ **顺序永远是「提交 → 推送 → 部署」**，部署脚本自己会推，但推的是**已提交**的内容。
 
 ---
 
@@ -93,7 +115,7 @@
 | 挂载生效 | `/app/WeKnora` ← `.build/WeKnora`（rw=false）✅ |
 | 版本自证 | 容器内二进制 `grep -c <commit>` 命中 **7 次**，等于部署机 HEAD ✅ |
 | 文件一致性 | 宿主与容器内 size 完全一致（279941568）✅ |
-| 数据库迁移 | 保持 `108 / dirty=f` —— **未执行任何迁移** ✅ |
+| 数据库迁移 | 保持 `108 / dirty=f` —— **当时迁移文件仍在镜像内**，故新迁移不会生效（补齐见 §3.4） |
 | 三个 https 入口 | `443` / `41200` / `41280` 全部 **200** ✅ |
 | 分支逻辑 | 已挂载时走 `restart`：容器 `Created` 未变、仅 `StartedAt` 更新 ⇒ 未重建容器 ✅ |
 
@@ -111,6 +133,32 @@
 > 三个缓存卷：`weknora-go-mod`（依赖源码）、`weknora-go-build-cache`（编译产物）、
 > `weknora-cargo-registry`（Rust crates）。均为**命名卷**、不由 compose 管 ⇒ `down -v` 不会误删。
 
+### 3.4 迁移外置（2026-09-22 完成）
+
+**起因**：二进制外置后暴露了一个"半外置"问题 —— 代码更新了、**表结构没更新**。
+上游这轮的 `000109` 给 `sessions` 加列，而新代码的 `Session` 模型直接读该列 ⇒
+列不存在会让**所有会话查询报错**。当时先手工补了 DDL 应急，随后把迁移层也外置。
+
+| 检查 | 结果 |
+|---|---|
+| 触发方式 | 挂载变化 ⇒ `up` **重建** app（`restart` 不应用新挂载） |
+| 容器内挂载 | `migrations → /app/migrations`（read_only）✅ |
+| 文件一致性 | 容器内与宿主 `000109` 的 md5 一致（`910bec91fc97…`）✅ |
+| 迁移执行 | 启动日志 `Database migrated from version 108 to 109` ✅ |
+| 库结构 | `schema_migrations = 109/false`；列与**列注释**均已写入 ✅ |
+| 服务 | app healthy；`41200` / `41280` / searxng / neo4j Bolt 全部正常 ✅ |
+
+> **为什么"列注释"是有效判据**：应急时手工执行的 DDL 只加了列、**没有注释**；
+> 而官方 `000109` 里含 `COMMENT ON COLUMN` ⇒ 注释存在，即证明这是**迁移文件本身**
+> 跑通的，不是遗留的手工状态。这同时说明迁移历史已回到正轨。
+
+**两次部署的对照**（第一次失败恰好演示了 §6 第 7 条）：
+
+| 顺序 | 111 的 overlay | compose 判定 | 容器内迁移文件 | 结果 |
+|---|---|---|---|---|
+| 改完**直接** `up`（未提交） | 旧（无挂载） | 无需重建 ⇒ 全 `Running` | `000108` | ❌ 输出全绿但未生效 |
+| **提交后** `up` | 新 | `Recreate` | `000109` | ✅ 生效 |
+
 ---
 
 ## 四、收益（诚实说明）
@@ -120,6 +168,7 @@
 | 改前端 | `build frontend-wkj`（分钟级） | `push-ui` | 镜像层操作 + 容器重建；**且无需重启** |
 | 改 docreader | `build docreader`（分钟级） | `push-reader` | **几乎全免** |
 | 改后端 Go | `build app`（7~16 分钟） | `push-app` | **镜像 final 阶段 + 容器重建；编译时间靠缓存压到 16s** |
+| 官方带来新迁移 | `build app`（重建镜像，7~16 分钟）；★ **若只做二进制外置则根本不生效** | 随 `push-app` / `up` 自动执行 | 镜像操作；**以及"迁移静默不跑"这个隐患** |
 | 依赖清单变了 | `build` | `build`（仍走全量） | — （不可避免） |
 
 **附带好处**：
@@ -177,6 +226,8 @@
 | 4 | **单文件挂载要求宿主文件已存在** | 否则 Docker 创建同名**目录** ⇒ ENTRYPOINT 失败、容器起不来 | 首次启用顺序：**先** `push-app` 产出 `.build/WeKnora`，**再** `up -d app` |
 | 5 | **手工替换产物后必须重启容器** | bind mount 在容器启动时解析；只换文件不重启 ⇒ 容器内仍是旧二进制 | 用 `push-app`（已内置重启）；不要手工 `cp` 完就算 |
 | 6 | 本地 `npm ci` 可能被环境拦下 | `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]` | 前端产物优先从 111 现有容器 `docker cp` 取得 |
+| 7 | **改了编排却直接部署（改动未提交）** | 输出**全绿**、容器全 `Running`、后端 200，但挂载/配置实际是旧的 | `sync_code` 推的是**已提交**内容 ⇒ 顺序必须「**提交 → 推送 → 部署**」。判据用 `docker inspect … --format '{{range .Mounts}}{{.Destination}}{{end}}'` 看挂载，**别信 compose 的 `Running`**（2026-09-22 实测踩到） |
+| 8 | **迁移未同步 / 未执行，但服务照常 healthy** | app 正常、无报错；`AUTO_MIGRATE` 失败只 `warn` 不退出（`container.go` 的 "don't fail startup"）⇒ 「服务正常」**掩盖**「迁移没跑」 | 外置后宿主 `migrations/` 必须**存在且非空**；用 `health` 里的 `check_migrations` 核两道判据：容器内文件名 = 仓库、库版本 = 文件最高版本 |
 
 > **第 5 条的机制澄清（2026-09-22 实测）**：Go 的 `-o` 是**写临时文件再 rename**
 > ⇒ 每次编译产物 **inode 都会变**（实测 `1164023 → 1164022`）。
@@ -201,18 +252,21 @@
 
 # ── 改了编排（overlay）────────────────────────────────
 ./deploy/deploy-wkj-dev.sh up           # 只重建受影响的容器
+# ★ 前提：改动**已提交**（脚本推的是已提交内容，未提交部分不会生效）
 
 # ── 依赖清单 / 基础镜像 / 上游同步 ────────────────────
 ./deploy/deploy-wkj-dev.sh build        # 全量（7~16 分钟，不可避免）
 
 # ── 只同步代码，不碰容器 ──────────────────────────────
-./deploy/deploy-wkj-dev.sh sync         # ⇒ 不触发 DB 自动迁移
+./deploy/deploy-wkj-dev.sh sync         # 会更新 ./migrations 文件，但 app 不重启
+                                        # ⇒ 新迁移要等下次 app 启动才执行
 ```
 
 **验证闭环（改完自证）**：
 
 ```bash
-./deploy/deploy-wkj-dev.sh health                          # 后端 + 两个前端是否 200
+./deploy/deploy-wkj-dev.sh health                          # 后端 + 两个前端 200，含迁移一致性校验
 ssh nanning-111 'docker exec WeKnora-app grep -ac <8位commit> /app/WeKnora'   # 至少 1 次命中
 ssh nanning-111 'docker exec WeKnora-frontend-wkj grep -rl "<7位commit>" /usr/share/nginx/html/'  # ★ 前端只存 7 位
+ssh nanning-111 'docker exec WeKnora-app ls /app/migrations/versioned/ | tail -1'  # 应与仓库最新一致
 ```
