@@ -503,6 +503,14 @@ footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font
 <b>别把「Wiki 的链接图」当成「知识图谱」</b>。Wiki 也有 nodes/edges 结构，但它的节点是<b>页面</b>、边是<b>页面间的超链接</b>（<code>in_links</code>/<code>out_links</code>）。而知识图谱的节点是<b>实体</b>、边是<b>语义关系</b>，且存在完全不同的数据库里。两者名字都叫 graph，实质毫无关系。
 </div>
 
+<div class="warn">
+<b>对一下界面（这条最容易踩）</b>：知识库页面上的「<b>图谱</b>」标签，显示的就是<b>本节的 Wiki 链接图</b>，不是知识图谱。三条判断依据：<br>
+① 该标签<b>只在 Wiki 类型知识库上出现</b>（前端显示条件是 <code>isWiki</code>，<code>KnowledgeBase.vue:2224</code>）；<br>
+② 它的数据来自 <code>GET /api/v1/knowledgebase/{id}/wiki/graph</code>，前端注释原文是 <span class="pill p">wiki link graph</span>，返回类型 <code>WikiGraphData</code>；<br>
+③ 图例里的类型筛选（摘要 / 实体 / 概念 / 综述 / 对比）正是 Wiki 的页面类型。其中的「实体」指的是<b>「这个 Wiki 页面讲的是某个实体」这一分类</b>，不是知识图谱里的实体对象。<br>
+所以：<b>看到「图谱」标签里有节点和关系，并不代表知识图谱开启了。</b>
+</div>
+
 <!-- ============ 7 ============ -->
 <h2 id="s7"><span class="num">7</span>知识图谱：唯一不在关系库里的数据</h2>
 
@@ -558,6 +566,10 @@ footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font
 
 <div class="warn">
 <b>图谱是可选增强，不是必需</b>。它依赖外部图数据库、抽取要调模型（慢且花钱），所以默认关闭。不开图谱时，其他三种索引完全正常工作。
+</div>
+
+<div class="tip">
+<b>ⓘ 知识图谱在界面上没有独立可视化页面</b>：整个前端里它只出现两处——知识库编辑器的「<b>知识图谱抽取</b>」开关，以及知识库列表上的「知识图谱」特性徽章。它会通过检索间接生效：把实体关系扩展成额外的候选分块（缓存到 <code>relation_chunks</code>），并在智能体侧提供图谱查询工具。想知道「图谱开了没有」，看开关和徽章即可，别去看那个图谱页面。
 </div>
 
 <!-- ============ 8 ============ -->
@@ -712,8 +724,8 @@ footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font
 </div>
 
 <div class="card blue">
-<h4 style="margin-top:0">Q4：知识图谱和 Wiki 的「图」是一回事吗？</h4>
-<p style="margin-bottom:0">不是。图谱的节点是<b>实体</b>、存 Neo4j；Wiki 的图节点是<b>页面</b>、数据就在关系库里。两者只是都叫 graph。</p>
+<h4 style="margin-top:0">Q4：没开知识图谱，为什么「图谱」页面有节点和关系？</h4>
+<p style="margin-bottom:0">因为那个页面画的是 <b>Wiki 链接图</b>，不是知识图谱——节点是你的 Wiki 页面，边是页面正文里的 <code>[[双链]]</code>。三条判断依据见第 6 章末尾的提示。真正的知识图谱在界面上只有开关和徽章，没有可视化页；两者同名不同物，一个在 PostgreSQL、一个在 Neo4j。</p>
 </div>
 
 <div class="card blue">
