@@ -228,6 +228,7 @@
 | 6 | 本地 `npm ci` 可能被环境拦下 | `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]` | 前端产物优先从 111 现有容器 `docker cp` 取得 |
 | 7 | **改了编排却直接部署（改动未提交）** | 输出**全绿**、容器全 `Running`、后端 200，但挂载/配置实际是旧的 | `sync_code` 推的是**已提交**内容 ⇒ 顺序必须「**提交 → 推送 → 部署**」。判据用 `docker inspect … --format '{{range .Mounts}}{{.Destination}}{{end}}'` 看挂载，**别信 compose 的 `Running`**（2026-09-22 实测踩到） |
 | 8 | **迁移未同步 / 未执行，但服务照常 healthy** | app 正常、无报错；`AUTO_MIGRATE` 失败只 `warn` 不退出（`container.go` 的 "don't fail startup"）⇒ 「服务正常」**掩盖**「迁移没跑」 | 外置后宿主 `migrations/` 必须**存在且非空**；用 `health` 里的 `check_migrations` 核两道判据：容器内文件名 = 仓库、库版本 = 文件最高版本 |
+| 9 | **系统信息页报「UI 版本与应用版本不一致」**（实为误报） | 应用版本 `v0.8.0` vs UI 版本 `0.8.0`；判断条件是 `systemInfo.version !== frontendVersion`（`SystemInfo.vue`），两侧口径不同 ⇒ 必然不等。**与 commit 位数无关**（8 位 vs 7 位只影响显示，且 `vite.config.ts` 强制 `slice(0,7)`，改不动） | 见下方「版本口径对齐」 |
 
 > **第 5 条的机制澄清（2026-09-22 实测）**：Go 的 `-o` 是**写临时文件再 rename**
 > ⇒ 每次编译产物 **inode 都会变**（实测 `1164023 → 1164022`）。
@@ -235,6 +236,42 @@
 > 让 bind mount 重新解析路径（容器内 inode 同步变为 `1164022`）。
 > ⇒ 不要用"inode 相同"判断容器内是否最新，**判据要用容器内 `grep -c <commit>`**。
 > ⇒ 也不要在 Mac 上验证这条 —— Mac 的 Docker 走 VM 文件共享，语义与原生 Linux bind mount **不同**。
+
+### 版本口径对齐（2026-09-22，第 9 条坑的详情）
+
+**现象**：设置→系统信息 显示「UI 版本 `0.8.0`」+ 标签「与应用版本不一致」，而应用版本显示 `v0.8.0`。
+
+**根因**：前端 `frontendVersion` 取自 `package.json` 的 `version`（`0.8.0`，官方不带 `v`），
+后端 `handler.Version` 取自 `git describe --tags --abbrev=0` = tag 名（`v0.8.0`）。
+判断只比这一个字段 ⇒ 必然不等。**与括号里的 commit 位数无关**（8 位 vs 7 位不参与判断）。
+
+**两个必须知道的点**：
+
+1. **只改注入值无效**。`Makefile` 的写法是
+   `VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "${VERSION:-unknown}")`
+   —— `describe` 成功时**环境变量被忽略**。且仓库里只有 `v*` 形式的 tag，没有不带 v 的可选。
+2. **官方本来就走 fallback，是我们绕过了它**。官方 Docker 构建时 `.dockerignore` 排除了 `.git`
+   ⇒ 容器内没有仓库 ⇒ `describe` 必然失败 ⇒ `Version` 来自官方专为此留的 `VERSION_ARG`。
+   而 `push-app` 挂载了完整仓库（含 `.git`）并配了 `safe.directory` ⇒ `describe` 反而成功。
+
+**处置**（只动我们自己的文件，不碰官方）：
+
+| 位置 | 改动 |
+|---|---|
+| `_build_with_version` / `push-app` | 注入的版本值去掉 `v` 前缀（`sed 's/^v//'`） |
+| `push-app` 的编译命令 | 容器内加一个 **git shim**（`PATH` 前置）：只让 `describe --tags --abbrev=0` 返回非零以走官方 fallback，其余 git 调用（含 `go build` 的 VCS stamping）原样转发。落 `/tmp` 且容器 `--rm` ⇒ 不留痕、不碰仓库 |
+| 前端 | **不动** —— `my-frontend/` 是逐字副本，改它会让 `diff -rq` 判据失真 |
+
+**验证**：二进制里 buildinfo 会记录完整的 `-ldflags`，可直接读回（不必登录页面）：
+
+```bash
+ssh nanning-111 "docker exec WeKnora-app grep -aoE \"handler\.[A-Za-z]+=[^']{1,40}\" /app/WeKnora | sort -u"
+# → handler.Version=0.8.0   handler.CommitID=20a9ff8f   handler.Edition=standard  …
+#   Version 无 `v` 前缀即表示已对齐（前端 package.json 同为 0.8.0）
+```
+
+★ **失效条件**：若上游改了 `Makefile` 那一行的写法（改为参数化、或 `describe` 换形式），
+shim 就不再必要、也可能产生副作用 ⇒ **每次上游同步后复核这一处**。
 
 ---
 
