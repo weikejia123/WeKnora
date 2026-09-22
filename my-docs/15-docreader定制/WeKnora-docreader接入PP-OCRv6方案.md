@@ -3,7 +3,25 @@
 > **目标**：让 docreader 在处理 **扫描件 PDF** 时改用 110 的 PP-OCRv6（`10.168.1.110:36741`），
 > 而不是走 Go 侧的 VLM OCR。
 > **约束**：不引入 VL 模型；官方文件改动降到最低；不重建 docreader 镜像。
-> **状态**：方案已定，**未实施**。引用基线 `@993d6560`（`wkj-dev`）。
+> **状态：已实施并部署**（2026-09-22）。官方文件改动 1 处 2 行、代码在 `my-docreader/`、
+> `push-reader` 秒级生效；已用真实公文在 111 容器内验证（走 registry 真实类）。
+>
+> ⚠️ **★ 其依赖的 110 服务已下线（2026-09-22 15:2x，老魏决定）**
+> —— `pp-ocr-v6-gpu-api`（36741）容器**已删除**（镜像与模型缓存保留）。
+> **后果**：`markitdown` 引擎处理 PDF 时，本 converter 会**连不上后端**，按
+> `PPOCR_FALLBACK=true` **静默退给内置 PDF 转换器** ⇒ **不是报错，是能力悄悄降级**。
+> - 若知识库把 `pdf` 引擎选为 `markitdown`，**它现在等价于「markitdown 内置 PDF 转换」**，
+>   而不是「PP-OCRv6 OCR」。**排查时别被这个静默降级骗了**（日志里会有
+>   `[PPOCRv6] … unreachable … falling back` 之类的记录）。
+> - **恢复方式**（一条命令，镜像/编排/模型都在）：
+>   ```bash
+>   ssh nanning-110 'cd /opt/docker-deploy/pp-ocr-v6 && docker compose -f compose.gpu.yaml up -d'
+>   ```
+> - **现在的推荐路径已换人**：扫描件 PDF 走 **PP-StructureV3（110:36742）+
+>   `paddleocr_vl` 引擎** —— 见
+>   `PP-StructureV3-部署记录与验证（南宁110）.md`（已端到端实测通过）。
+>   本方案保留作为备选与技术记录。
+>
 > **背景**：为什么不是其他路径，见 `my-docs/04-功能机制解析/WeKnora-解析引擎接入机制.md`。
 
 ---
@@ -355,9 +373,13 @@ Go 侧 `docreader_call_timeout`。**大 PDF 有超时风险**，需按实际文�
 内置 PDF 转换器会把文档内嵌图片内联进 markdown；我们的 converter **只出文字**
 ⇒ markdown 里没有图片。对「只要文字」的场景没问题，但要知道这个差异。
 
-**⑤ 110 会成为 docreader 的硬依赖**
+**⑤ 110 会成为 docreader 的硬依赖**（★ 该依赖已于 2026-09-22 **实际发生**）
 改完后 `markitdown` 引擎处理 PDF 必须能连到 110。**所以 §三 的 `PPOCR_FALLBACK` 建议保持开启**，
 否则 110 一挂，这批文档全部解析失败。
+> **实际结果**：老魏于 2026-09-22 删除 `pp-ocr-v6-gpu-api` 容器（见文档头 ⚠️）。
+> 因为 `PPOCR_FALLBACK=true`，**没有报错、只是能力静默降级**成「markitdown 内置 PDF 转换」。
+> ⇒ 这一条从「风险」变成了「事实」，也正好印证了当初选 `FALLBACK=true` 是对的
+> （否则现在会是一批文档解析失败）。
 
 **⑥ 质量要分两个维度看，结构一项已有实测数据**（详见 §4.6）
 

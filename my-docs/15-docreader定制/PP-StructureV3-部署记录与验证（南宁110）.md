@@ -191,6 +191,20 @@ PP-StructureV3 面向「WeKnora 的文档解析后端」。混放会导致 pp-oc
 ⇒ 与 `pp-ocr-v6-gpu`(2574) + Ollama-embedding(4300) 全开约 **8618 MiB** 静止、
 约 **10900 MiB** 推理 ⇒ **余量约 1.4 GB，再加载 VLM 将 OOM**。
 
+**★ 更新（2026-09-22 15:2x）：`pp-ocr-v6-gpu-api` 容器已删除**（老魏决定；镜像与模型缓存保留）
+⇒ 共卡项少一项。**实测当前状态**：
+
+| 占用方 | 实测 |
+|---|---|
+| PP-StructureV3（常驻） | 2166 MiB |
+| Ollama `qwen3-embedding:4b` | 4304 MiB（★ 已按需自动重载，见 §6.1 第 1 条风险） |
+| `llama-server` | 138 MiB |
+| **合计 / 空闲** | **6628 / 5283 MiB** |
+
+⇒ PP-StructureV3 推理峰值约 +2.3 GB ⇒ 峰值时余量约 **3.4 GB**，比原先宽裕。
+恢复 36741 需 `docker compose -f compose.gpu.yaml up -d`（见
+`WeKnora-docreader接入PP-OCRv6方案.md` 头部的恢复命令）。
+
 **★ 一处按实测修正的配置（WeKnora 侧需知悉）**
 
 6 并发时第 6 个请求被 **429** 拒绝（原队列容量 4）。而 **WeKnora 侧只给 1000s
