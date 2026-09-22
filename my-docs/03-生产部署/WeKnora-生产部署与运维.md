@@ -517,6 +517,42 @@ SSRF_WHITELIST=host.docker.internal,localhost,127.0.0.1,10.168.1.110,10.168.1.11
 > 这些服务都是在跑的，但**具体用哪个、Key 是什么由你决定**——脚本只负责把网络通路（SSRF 白名单）打开。
 >
 > 注意 110 的 Ollama 是 `OLLAMA_NUM_PARALLEL=1`（单并发槽），长请求会互相阻塞，WeKnora 的批量 embedding 可能与之冲突。生产用建议单独规划一个 embedding 服务。
+>
+> ★ **精确化（2026-09-22 实测）**：该值**不是我们设的** —— 容器 env 里只有
+> `OLLAMA_HOST` / `OLLAMA_KEEP_ALIVE`；`OLLAMA_NUM_PARALLEL:1` 是 **Ollama 的内置默认**
+> （启动配置回显可见）。引用时别写成「我们配置了单并发」。
+
+#### ★ 110 Ollama 的模型驻留策略（2026-09-22 起为 1 小时）
+
+**这项改动直接影响 WeKnora 的检索体验，排查「检索第一次很慢」时先看这里。**
+
+| 项 | 值 |
+|---|---|
+| 配置 | `OLLAMA_KEEP_ALIVE=1h`（原为 `24h`，2026-09-22 改） |
+| 语义 | **有调用就一直驻留；连续 1 小时无人调用则自动释放显存**（每次调用重置计时） |
+| 占用 | 释放后 GPU 全省；加载时 `qwen3-embedding:4b` 约占 **4.2 GB** |
+
+**受影响的 WeKnora 模型**（都在检索链路上，端点均为 `10.168.1.110:11434/v1`）：
+
+| 模型 | 类型 | 何时被调 |
+|---|---|---|
+| `qwen3-embedding:4b` | Embedding | **每次检索**（query 向量化）+ 入库（分块向量化） |
+| `awenleven/Qwen3-Reranker-4B:Q4_K_M` | Rerank | 检索后的重排 |
+
+**实测代价（2026-09-22）**：
+
+| 场景 | 耗时 |
+|---|---|
+| 模型被释放后的**首次**调用（＝ 闲置 1h 后的第一次检索） | **8.07 s** |
+| 已加载（热调用） | 0.116 s |
+| 容器刚重启后的首次调用 | 24.4 s |
+
+⇒ **只在「闲置 1 小时后第一次」付出约 8 秒**；若 Embedding 与 Rerank 同时被释放，代价会叠加。
+**不会失败**（已验证）——Ollama 侧 `OLLAMA_LOAD_TIMEOUT=5m`，且 WeKnora 侧
+embedding 客户端未设超时（`request_timeout_seconds` 未配置 ⇒ `Timeout=0`）。
+
+> 权威记录（改了什么、怎么回滚、实测全表）在 110 的独立仓库：
+> `/opt/docker-deploy/pp-structure-v3/` → `my-docs/30-实施/01-部署实施记录.md` §12.3。
 
 ---
 
