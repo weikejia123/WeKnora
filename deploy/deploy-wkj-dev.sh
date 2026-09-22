@@ -445,7 +445,12 @@ _ensure_build_artifacts() {
 # 同时喂给前端的 VITE_FRONTEND_COMMIT（系统信息页会显示）。
 _build_with_version() {
   WKJ_BUILD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
-  WKJ_BUILD_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || true)
+  # ★ 去掉 tag 的 `v` 前缀（2026-09-22）：前端「UI 版本」取自 package.json 的
+  #   `version`（`0.8.0`，官方不带 v），而后端 Version 取自 tag 名（`v0.8.0`）
+  #   ⇒ 系统信息页用 `systemInfo.version !== frontendVersion` 判断，必然判为
+  #     "与应用版本不一致"（**误报**，与 commit 位数无关）。
+  #   统一为无 v 口径即可消除。前端那侧不能动（逐字副本），故从后端侧对齐。
+  WKJ_BUILD_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
   [ -n "$WKJ_BUILD_VERSION" ] || WKJ_BUILD_VERSION="$BRANCH"
   WKJ_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   export WKJ_BUILD_COMMIT WKJ_BUILD_VERSION WKJ_BUILD_TIME
@@ -847,7 +852,7 @@ cmd_push_app() {
   step "① 在 111 上编译 app（编译镜像，与 final 镜像同 glibc 基线）"
   ssh "$SSH_HOST" \
       "DIR='$REMOTE_DIR' IMG='$img' \
-       V='$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || echo unknown)' \
+       V='$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')' \
        C='$(git -C "$REPO_ROOT" rev-parse --short=8 HEAD)' \
        T='$(date -u +%Y-%m-%dT%H:%M:%SZ)' \
        G='go1.26.8' bash -s" <<'REMOTE_APP_BUILD'
@@ -877,9 +882,31 @@ docker run --rm \
   -w /src \
   -e VERSION="$V" -e COMMIT_ID="$C" -e BUILD_TIME="$T" -e GO_VERSION="$G" \
   "$IMG" \
-  bash -c 'git config --global --add safe.directory /src && \
-           ./scripts/build-anydoc-lib.sh && \
-           make build-prod GO_BUILD_TAGS=anydoc BINARY_NAME=/out/WeKnora'
+  bash -c '
+    # ── 让 Makefile 的 `git describe --tags --abbrev=0` 失败，以走官方设计的
+    #    fallback：Makefile 的写法是
+    #        VERSION=$$(git describe --tags --abbrev=0 2>/dev/null || echo "$${VERSION:-unknown}")
+    #    ⇒ describe 成功时**环境变量 VERSION 被忽略**，取到的是带 v 的 tag 名。
+    #    为什么官方会走 fallback：Dockerfile 构建时 .dockerignore 排除了 .git，
+    #    容器内没有仓库 ⇒ describe 必然失败 ⇒ Version 来自官方专为此留的
+    #    `VERSION_ARG`。**我们挂载了完整仓库（含 .git）并配了 safe.directory，
+    #    反而绕过了官方设计** —— 这里把它恢复成官方的行为。
+    #    shim 只拦 describe，其余 git 调用（含 go build 的 VCS stamping）原样转发。
+    #    落点 /tmp 且容器是 --rm ⇒ 不留痕、不碰仓库。
+    REAL_GIT=$(command -v git)
+    mkdir -p /tmp/gitshim
+    printf "%s\n" "#!/bin/sh" \
+      "case \"\$*\" in *describe*--abbrev=0*) exit 1 ;; esac" \
+      "exec $REAL_GIT \"\$@\"" > /tmp/gitshim/git
+    chmod +x /tmp/gitshim/git
+    export PATH=/tmp/gitshim:$PATH
+
+    git config --global --add safe.directory /src && \
+    ./scripts/build-anydoc-lib.sh && \
+    make build-prod GO_BUILD_TAGS=anydoc BINARY_NAME=/out/WeKnora'
+
+# ★ 上面的 shim 只为对齐「UI 版本 vs 应用版本」的口径 —— 详见 _build_with_version
+#   的注释与 `my-docs/12-应用代码外置/` 的说明（前端 version 无 v、后端 tag 有 v）。
 
 # ★ build-anydoc-lib.sh 不能省（首个版本漏了它 ⇒ 编译走到 link 才报
 #   `/usr/bin/ld: cannot find -lanydoc_go`）。它是 anydoc（进程内 office 解析）的
