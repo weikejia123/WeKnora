@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WeKnora 本机浏览器技能（BrowserSkill）使用手册</title>
+<style>
+:root{
+  --ink:#1f1f1d; --sub:#5f5e5a; --hint:#888780;
+  --bg:#faf9f6; --card:#ffffff; --line:#e6e4dc; --line2:#d3d1c7;
+  --blue:#185fa5; --blue-bg:#e6f1fb; --blue-line:#378add;
+  --green:#3b6d11; --green-bg:#eaf3de; --green-line:#639922;
+  --amber:#854f0b; --amber-bg:#faeeda; --amber-line:#ba7517;
+  --red:#a32d2d; --red-bg:#fcebeb; --red-line:#e24b4a;
+  --purple:#534ab7; --purple-bg:#eeedfe; --purple-line:#7f77dd;
+  --gray-bg:#f1efe8; --gray-line:#888780;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+  font-size:15px; line-height:1.75;
+}
+.wrap{max-width:900px; margin:0 auto; padding:40px 24px 80px}
+h1{font-size:27px; font-weight:600; margin:0 0 8px; letter-spacing:-.3px}
+h2{font-size:20px; font-weight:600; margin:52px 0 16px; padding-top:22px; border-top:1px solid var(--line); letter-spacing:-.2px}
+h2 .num{color:var(--blue); margin-right:10px; font-variant-numeric:tabular-nums}
+h3{font-size:16px; font-weight:600; margin:28px 0 10px}
+h4{font-size:14px; font-weight:600; margin:20px 0 8px; color:var(--sub)}
+p{margin:0 0 12px}
+a{color:var(--blue)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px;
+  background:var(--gray-bg); padding:1px 5px; border-radius:4px}
+.lead{font-size:16px; color:var(--sub); margin:0 0 20px}
+.sub{font-size:13px; color:var(--sub)}
+
+/* 状态条 */
+.statusbar{display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line);
+  border-radius:10px; overflow:hidden; margin:20px 0 8px; background:var(--card)}
+.statusbar div{flex:1 1 150px; padding:12px 16px; border-right:1px solid var(--line)}
+.statusbar div:last-child{border-right:0}
+.statusbar .k{font-size:12px; color:var(--hint); display:block}
+.statusbar .v{font-size:14px; font-weight:600}
+
+.card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px 22px; margin:16px 0}
+.card.blue{background:var(--blue-bg); border-color:#c9dff5}
+.card.amber{background:var(--amber-bg); border-color:#f0dcb4}
+.card.red{background:var(--red-bg); border-color:#f5cfcf}
+.card.green{background:var(--green-bg); border-color:#cfe3b8}
+
+table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14px;
+  background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden}
+th{background:var(--gray-bg); text-align:left; padding:10px 13px; font-weight:600; font-size:13px;
+  border-bottom:1px solid var(--line2); white-space:nowrap}
+td{padding:10px 13px; border-bottom:1px solid var(--line); vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.n{white-space:nowrap; font-weight:600}
+
+ul,ol{margin:0 0 12px; padding-left:22px}
+li{margin:5px 0}
+
+.tip{border-left:3px solid var(--blue-line); background:var(--blue-bg);
+  padding:12px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:14px}
+.tip b{color:var(--blue)}
+.warn{border-left:3px solid var(--red-line); background:var(--red-bg);
+  padding:12px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:14px}
+.warn b{color:var(--red)}
+.ok{border-left:3px solid var(--green-line); background:var(--green-bg);
+  padding:12px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:14px}
+.ok b{color:var(--green)}
+
+figure{margin:22px 0; background:var(--card); border:1px solid var(--line);
+  border-radius:12px; padding:18px 18px 12px}
+figure svg{width:100%; height:auto; display:block}
+figcaption{font-size:13px; color:var(--sub); margin-top:10px; text-align:center}
+
+.pill{display:inline-block; font-size:12px; padding:2px 9px; border-radius:20px;
+  border:1px solid var(--line2); background:var(--gray-bg); color:var(--sub); margin-right:6px}
+.pill.b{background:var(--blue-bg); border-color:#c9dff5; color:var(--blue)}
+.pill.g{background:var(--green-bg); border-color:#cfe3b8; color:var(--green)}
+.pill.a{background:var(--amber-bg); border-color:#f0dcb4; color:var(--amber)}
+.pill.r{background:var(--red-bg); border-color:#f5cfcf; color:var(--red)}
+
+.toc{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 22px; margin:24px 0}
+.toc ol{columns:2; column-gap:32px; margin:0; padding-left:20px; font-size:14px}
+.toc li{margin:4px 0; break-inside:avoid}
+.toc a{text-decoration:none}
+.toc a:hover{text-decoration:underline}
+
+.q{background:var(--gray-bg); border-radius:8px; padding:10px 14px; font-size:14px; margin:10px 0;
+  border:1px dashed var(--line2)}
+.q b{color:var(--ink)}
+footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font-size:13px; color:var(--hint)}
+@media(max-width:640px){
+  .toc ol{columns:1} .wrap{padding:24px 16px 60px}
+  .statusbar div{flex:1 1 100%; border-right:0; border-bottom:1px solid var(--line)}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>WeKnora 本机浏览器技能（BrowserSkill）使用手册</h1>
+<p class="lead">让智能体在你自己的 Chrome 里打开网页、点击、填写、抓取内容——并且遇到登录和验证码时，交还给你来处理。</p>
+
+<div class="statusbar">
+  <div><span class="k">控制对象</span><span class="v">你自己的 Chrome</span></div>
+  <div><span class="k">登录态</span><span class="v">复用你的 Cookie</span></div>
+  <div><span class="k">人工接管等待</span><span class="v">5 分钟</span></div>
+  <div><span class="k">配对有效期</span><span class="v">5 分钟 · 单次</span></div>
+</div>
+<p class="sub">依据：WeKnora 源码 <code>internal/browserskill/</code>、<code>internal/agent/tools/browserskill*.go</code> 与官方 <code>docs/browser-skill-integration.md</code>。</p>
+
+<div class="toc">
+<ol>
+<li><a href="#s1">先搞清楚：它是什么，不是什么</a></li>
+<li><a href="#s2">协同架构：三方两段</a></li>
+<li><a href="#s3">四步上手</a></li>
+<li><a href="#s4">配对为什么是安全的</a></li>
+<li><a href="#s5">三种协同场景</a></li>
+<li><a href="#s6">任务的一生：开始、暂停、结束</a></li>
+<li><a href="#s7">预览小窗：你的控制台</a></li>
+<li><a href="#s8">智能体能做哪些动作</a></li>
+<li><a href="#s9">排错指南</a></li>
+<li><a href="#s10">管理员：启用前必须满足的条件</a></li>
+</ol>
+</div>
+
+<!-- ============ 1 ============ -->
+<h2 id="s1"><span class="num">1</span>先搞清楚：它是什么，不是什么</h2>
+
+<div class="card red">
+<h4 style="margin-top:0;color:var(--red)">最常见的误解</h4>
+<p style="margin-bottom:0">很多人以为「浏览器技能」是服务端开了个无头浏览器（Headless Chrome）在替你上网。<b>不是。</b>服务端没有替你上网的浏览器——它只是个中转站。真正在打开网页的，是<b>你自己电脑上那个 Chrome</b>。</p>
+</div>
+
+<p>这个区别不是文字游戏，它决定了三件很实际的事：</p>
+
+<table>
+<tr><th style="width:23%">对比项</th><th>服务端无头浏览器（如果有的话）</th><th>本机浏览器技能（实际实现）</th></tr>
+<tr><td class="n">浏览器在哪</td><td>服务器上</td><td>你的电脑上</td></tr>
+<tr><td class="n">登录态</td><td>空的，谁也没登录</td><td><b>你的</b>——Cookie、已保存的密码都在</td></tr>
+<tr><td class="n">内网系统</td><td>通常访问不到</td><td>能访问（因为走的是你的网络）</td></tr>
+<tr><td class="n">遇到验证码</td><td>只能卡住</td><td>弹给你，你扫一下就过</td></tr>
+</table>
+
+<div class="ok">
+<b>所以它真正的价值</b>：能进「需要登录才能看」的页面。企业内网、后台系统、付费内容、需要扫码登录的站点——这些是普通联网搜索永远够不到的地方。
+</div>
+
+<h3>三种取网页的能力，别用混了</h3>
+<p>WeKnora 里跟「上网」有关的能力有三套，边界各不相同：</p>
+
+<table>
+<tr><th style="width:16%">能力</th><th style="width:22%">能拿到什么</th><th style="width:20%">登录态</th><th>适合什么</th></tr>
+<tr><td class="n">联网搜索<br><span class="sub">web_search</span></td><td>搜索结果条目的标题、链接、摘要片段</td><td>无</td><td>找线索：「这件事有没有公开报道」</td></tr>
+<tr><td class="n">网页抓取<br><span class="sub">web_fetch</span></td><td>把<b>公开</b>页面正文转成 Markdown</td><td>无</td><td>读内容：「这篇公开文章说了什么」</td></tr>
+<tr><td class="n">本机浏览器<br><span class="sub">local_browser</span></td><td>完整网页：可点击、填写、翻页、截图</td><td><b>有</b></td><td>办事情：「登录后台把这张表导出来」</td></tr>
+</table>
+
+<div class="tip">
+<b>ⓘ 怎么选</b>：只是在找公开资料，用前两个就够了，快得多。只有当前两个都不行——页面要登录、要交互、在内网——才值得启用本机浏览器。
+</div>
+
+<h3>典型场景</h3>
+<ul>
+<li><b>内网站点取数</b>：登录公司业务系统，翻到某张报表，把数据读出来</li>
+<li><b>需要多步交互的查询</b>：填表单、选下拉、点「查询」，再读结果</li>
+<li><b>抓取登录后才可见的内容</b>：会员文章、后台订单、需要扫码的页面</li>
+<li><b>页面长截图取证</b>：图表、看板这类「只有渲染出来才有意义」的内容</li>
+</ul>
+
+<!-- ============ 2 ============ -->
+<h2 id="s2"><span class="num">2</span>协同架构：三方两段</h2>
+
+<p>整条链路上有三个角色，两段连接。先看图，再逐个解释。</p>
+
+<figure>
+<svg viewBox="0 0 680 320" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>本机浏览器技能的协同架构</title>
+<desc>用户电脑上的 Chrome 与配套扩展通过 WSS 加密连接连到服务器侧的 WeKnora 网关，网关后端接 bsk daemon；智能体通过 local_browser 工具调用网关。</desc>
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<text x="40" y="30" font-size="13" font-weight="600" fill="#185fa5">你的电脑</text>
+<text x="400" y="30" font-size="13" font-weight="600" fill="#534ab7">WeKnora 服务器</text>
+<line x1="350" y1="44" x2="350" y2="300" stroke="#d3d1c7" stroke-width="1" stroke-dasharray="5 4"/>
+
+<rect x="55" y="100" width="250" height="100" rx="10" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="180" y="132" font-size="15" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">Chrome 浏览器</text>
+<text x="180" y="156" font-size="12" fill="#185fa5" text-anchor="middle" dominant-baseline="central">装了 BrowserSkill 配套扩展</text>
+<text x="180" y="178" font-size="12" fill="#185fa5" text-anchor="middle" dominant-baseline="central">你的 Cookie、密码都在这里</text>
+
+<rect x="400" y="60" width="235" height="56" rx="10" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="517" y="80" font-size="14" font-weight="600" fill="#173404" text-anchor="middle" dominant-baseline="central">智能体</text>
+<text x="517" y="100" font-size="12" fill="#3b6d11" text-anchor="middle" dominant-baseline="central">工具名 local_browser</text>
+
+<rect x="400" y="146" width="235" height="56" rx="10" fill="#eeedfe" stroke="#7f77dd" stroke-width="0.5"/>
+<text x="517" y="166" font-size="14" font-weight="600" fill="#26215c" text-anchor="middle" dominant-baseline="central">网关</text>
+<text x="517" y="186" font-size="12" fill="#534ab7" text-anchor="middle" dominant-baseline="central">鉴权 · 双向转发</text>
+
+<rect x="400" y="232" width="235" height="56" rx="10" fill="#f1efe8" stroke="#888780" stroke-width="0.5"/>
+<text x="517" y="252" font-size="14" font-weight="600" fill="#2c2c2a" text-anchor="middle" dominant-baseline="central">bsk 后台进程</text>
+<text x="517" y="272" font-size="12" fill="#5f5e5a" text-anchor="middle" dominant-baseline="central">真正下发浏览器指令</text>
+
+<path d="M517 116V141" fill="none" stroke="#639922" stroke-width="1.5" marker-end="url(#ar)"/>
+<path d="M517 202V227" fill="none" stroke="#7f77dd" stroke-width="1.5" marker-end="url(#ar)"/>
+<path d="M517 227V207" fill="none" stroke="#7f77dd" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="527" y="216" font-size="11" fill="#534ab7">本机 ws</text>
+
+<path d="M305 150H340V174H395" fill="none" stroke="#378add" stroke-width="1.8" marker-end="url(#ar)"/>
+<path d="M395 174H340V150H310" fill="none" stroke="#378add" stroke-width="1.8" marker-end="url(#ar)"/>
+<text x="352" y="140" font-size="12" font-weight="600" fill="#185fa5">WSS 加密</text>
+
+<text x="180" y="228" font-size="12" fill="#888780" text-anchor="middle">网页内容、登录态始终留在你的电脑上</text>
+<text x="180" y="248" font-size="12" fill="#888780" text-anchor="middle">传给服务器的只是「截图画面」和「页面文字」</text>
+</svg>
+<figcaption>图 1 · 协同架构。虚线是「本机 / 服务器」的分界——理解这条线，就理解了登录态从哪来。</figcaption>
+</figure>
+
+<table>
+<tr><th style="width:20%">角色</th><th style="width:24%">在哪</th><th>干什么</th></tr>
+<tr><td class="n">配套扩展</td><td>你的 Chrome</td><td>接收指令、操作真实标签页、把页面画面和文字传回</td></tr>
+<tr><td class="n">网关</td><td>服务器</td><td>验证你的身份、转发指令、管理「谁在控制哪个任务」</td></tr>
+<tr><td class="n">bsk 后台进程</td><td>服务器</td><td>把智能体的动作翻译成浏览器能听懂的指令</td></tr>
+</table>
+
+<div class="tip">
+<b>ⓘ 为什么服务端还要跑一个后台进程？</b>因为它负责把「点这个按钮」翻译成浏览器底层协议（CDP）的指令，还要管理任务窗口、标签借用这些状态。它是 Rust 写的原生程序，由服务进程自动拉起，用随机端口，你不用管它。
+</div>
+
+<!-- ============ 3 ============ -->
+<h2 id="s3"><span class="num">3</span>四步上手</h2>
+
+<figure>
+<svg viewBox="0 0 680 150" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>四步上手流程</title>
+<desc>安装扩展、配对浏览器、回到对话描述任务、通过预览跟进，共四步。</desc>
+<defs>
+<marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<circle cx="104" cy="52" r="15" fill="#185fa5"/>
+<text x="104" y="52" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle" dominant-baseline="central">1</text>
+<rect x="40" y="76" width="128" height="52" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="104" y="94" font-size="14" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">安装扩展</text>
+<text x="104" y="113" font-size="12" fill="#185fa5" text-anchor="middle" dominant-baseline="central">加载已解压</text>
+
+<circle cx="261" cy="52" r="15" fill="#185fa5"/>
+<text x="261" y="52" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle" dominant-baseline="central">2</text>
+<rect x="197" y="76" width="128" height="52" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="261" y="94" font-size="14" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">配对浏览器</text>
+<text x="261" y="113" font-size="12" fill="#185fa5" text-anchor="middle" dominant-baseline="central">粘贴一次性链接</text>
+
+<circle cx="419" cy="52" r="15" fill="#185fa5"/>
+<text x="419" y="52" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle" dominant-baseline="central">3</text>
+<rect x="355" y="76" width="128" height="52" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="419" y="94" font-size="14" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">描述任务</text>
+<text x="419" y="113" font-size="12" fill="#185fa5" text-anchor="middle" dominant-baseline="central">像对人说话</text>
+
+<circle cx="576" cy="52" r="15" fill="#639922"/>
+<text x="576" y="52" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle" dominant-baseline="central">4</text>
+<rect x="512" y="76" width="128" height="52" rx="8" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="576" y="94" font-size="14" font-weight="600" fill="#173404" text-anchor="middle" dominant-baseline="central">预览中跟进</text>
+<text x="576" y="113" font-size="12" fill="#3b6d11" text-anchor="middle" dominant-baseline="central">必要时接手</text>
+
+<path d="M168 102H192" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar2)"/>
+<path d="M325 102H350" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar2)"/>
+<path d="M483 102H507" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar2)"/>
+</svg>
+<figcaption>图 2 · 四步上手。前两步只做一次，之后每次对话直接从第 3 步开始。</figcaption>
+</figure>
+
+<h3>第 1 步 · 安装扩展</h3>
+<ol>
+<li>进入 <b>个人设置 → 浏览器连接</b></li>
+<li>点「<b>下载扩展</b>」，得到一个 ZIP 包</li>
+<li><b>解压</b>到一个不会随手删掉的文件夹（重要：解压目录要保留，Chrome 是从这个目录加载的）</li>
+<li>打开 Chrome 的 <code>chrome://extensions</code>，右上角开启<b>开发者模式</b></li>
+<li>点「<b>加载已解压的扩展程序</b>」，选刚才解压的文件夹</li>
+</ol>
+
+<div class="warn">
+<b>必须下载本服务提供的配套包</b>：官方原版扩展不包含 WeKnora 需要的任务控制接口，装错了会报「扩展缺少任务控制」。另外——<b>扩展升级后要重新下载覆盖</b>，光重启服务端不会更新你浏览器里的扩展。
+</div>
+
+<h3>第 2 步 · 配对这台浏览器</h3>
+<ol>
+<li>还是在设置页，点「<b>连接这台浏览器</b>」→「<b>复制配对链接</b>」</li>
+<li>打开扩展的「<b>远程连接</b>」，粘贴链接并确认</li>
+</ol>
+
+<div class="q"><b>配对链接长什么样？</b><br>
+<code>wss://你的域名/api/v1/local-browser/extension#一串令牌</code><br>
+井号后面那串就是令牌，<b>5 分钟内有效，只能用一次</b>。</div>
+
+<div class="tip">
+<b>ⓘ 配对一次就够</b>：同一个空间下的所有对话共用这台设备的授权，不需要每个对话配一次。换电脑或换浏览器才需要重新配对。
+</div>
+
+<h3>第 3 步 · 回到对话描述任务</h3>
+<p>在输入框打开「<b>本机浏览器</b>」开关，然后像对人说话一样描述任务：</p>
+<div class="q">「登录 XX 系统，进入订单管理，把今天的所有订单导出来」<br>
+「打开这个内网站点，找到 2024 年的统计报表，把数字读出来」<br>
+「去这个页面看看现在的实时价格是多少」</div>
+
+<p>发送后，Chrome 里会打开一个<b>带标识的独立任务窗口</b>，智能体在里面操作。这个窗口不会抢走你正在看的页面的焦点。</p>
+
+<h3>第 4 步 · 通过预览跟进</h3>
+<p>对话里会出现一个<b>小预览窗</b>，实时显示浏览器画面（约每秒一帧）。它可以拖动，也可以点标题栏的「<b>弹出悬浮窗</b>」变成置顶小窗。</p>
+<p>下面这些情况需要你出手，第 5 章详解：</p>
+<ul>
+<li>页面要登录 / 要输验证码 → 智能体会「等待你操作」</li>
+<li>智能体想用你已经打开的某个标签页 → 会请你授权</li>
+<li>你想中断它 → 点「暂停操作」</li>
+</ul>
+
+<!-- ============ 4 ============ -->
+<h2 id="s4"><span class="num">4</span>配对为什么是安全的</h2>
+
+<p>让一个网页服务来操作你的浏览器，听起来风险不小。所以配对这一步做了三重保护：</p>
+
+<figure>
+<svg viewBox="0 0 680 230" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>配对的三重保护</title>
+<desc>令牌放在 URL 井号后不发给服务器、令牌走 WebSocket 子协议不进链接和日志、连接来源必须是 Chrome 扩展。</desc>
+
+<rect x="40" y="46" width="180" height="150" rx="10" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="130" y="72" font-size="14" font-weight="600" fill="#412402" text-anchor="middle" dominant-baseline="central">① 令牌放井号后</text>
+<text x="130" y="98" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">wss://…/extension</text>
+<text x="130" y="118" font-size="12" font-weight="600" fill="#854f0b" text-anchor="middle" dominant-baseline="central">#令牌</text>
+<text x="130" y="146" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">井号后的内容</text>
+<text x="130" y="166" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">浏览器不会发给</text>
+<text x="130" y="184" font-size="12" font-weight="600" fill="#854f0b" text-anchor="middle" dominant-baseline="central">服务器</text>
+
+<rect x="250" y="46" width="180" height="150" rx="10" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="340" y="72" font-size="14" font-weight="600" fill="#412402" text-anchor="middle" dominant-baseline="central">② 令牌走子协议</text>
+<text x="340" y="100" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">连接时令牌放在</text>
+<text x="340" y="120" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">WebSocket 子协议里</text>
+<text x="340" y="148" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">不进网址</text>
+<text x="340" y="168" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">不进请求头</text>
+<text x="340" y="188" font-size="12" font-weight="600" fill="#854f0b" text-anchor="middle" dominant-baseline="central">不落访问日志</text>
+
+<rect x="460" y="46" width="180" height="150" rx="10" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="550" y="72" font-size="14" font-weight="600" fill="#412402" text-anchor="middle" dominant-baseline="central">③ 只认扩展</text>
+<text x="550" y="100" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">连接来源必须是</text>
+<text x="550" y="120" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">chrome-extension://</text>
+<text x="550" y="148" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">普通网页</text>
+<text x="550" y="168" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">脚本直连</text>
+<text x="550" y="188" font-size="12" font-weight="600" fill="#854f0b" text-anchor="middle" dominant-baseline="central">一律拒绝</text>
+
+<text x="340" y="26" font-size="13" font-weight="600" fill="#1f1f1d" text-anchor="middle">令牌从生成到使用的每一跳，都在减少它被看见的机会</text>
+</svg>
+<figcaption>图 3 · 配对的三重保护。源码：<code>manager.go:179-243</code>（生成）、<code>manager.go:349-357</code>（校验）、<code>manager.go:537</code>（来源校验）。</figcaption>
+</figure>
+
+<table>
+<tr><th style="width:26%">措施</th><th>效果</th></tr>
+<tr><td class="n">只存哈希</td><td>服务器数据库里存的是令牌的哈希值，不是令牌本身，泄露库也拿不到令牌</td></tr>
+<tr><td class="n">5 分钟 · 单次</td><td>链接过期即废，用过一次就失效</td></tr>
+<tr><td class="n">独占租约</td><td>同一时间只有一台服务器节点能持有这台浏览器的连接，不会两边同时指挥</td></tr>
+<tr><td class="n">随时撤销</td><td>设置页「<b>撤销设备授权</b>」立即失效，之后要重新配对</td></tr>
+</table>
+
+<div class="tip">
+<b>ⓘ 令牌存在哪？</b>令牌只存在你浏览器扩展自己的存储里，不会同步到 WeKnora 账号，也不会写进浏览器历史（因为它在井号后面）。所以换浏览器Profile、清扩展数据，都需要重新配对。
+</div>
+
+<!-- ============ 5 ============ -->
+<h2 id="s5"><span class="num">5</span>三种协同场景</h2>
+
+<p>智能体和你的浏览器之间，有三种不同亲密度的协作方式。</p>
+
+<h3>场景一 · 独立任务窗口（默认，最常见）</h3>
+<p>你发一个任务，Chrome 里打开一个<b>带标识的独立窗口</b>，智能体在里面自己开页面、点、填。</p>
+<ul>
+<li><b>不抢焦点</b>：不会把你正在看的页面顶掉</li>
+<li><b>共享登录态</b>：虽然是新窗口，但用的是同一个 Chrome，Cookie 是通的</li>
+<li><b>用完即清</b>：任务正常结束时，它新建的标签会被关闭</li>
+</ul>
+<div class="ok"><b>你什么都不用做</b>：除非页面要登录或验证码，否则整个流程不需要你介入。</div>
+
+<h3>场景二 · 借用你已经打开的标签页</h3>
+<p>有时候智能体需要操作<b>你已经打开的某个页面</b>（比如你已经登录好、筛选好的那个后台列表）。这时它不能直接用——得先借。</p>
+
+<figure>
+<svg viewBox="0 0 680 300" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>标签借用的时序</title>
+<desc>智能体发起借用，用户在目标页面点允许，智能体读取操作，最后用 tab_return 归还到原位。</desc>
+<defs>
+<marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<circle cx="52" cy="40" r="14" fill="#ba7517"/>
+<text x="52" y="40" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">1</text>
+<rect x="80" y="20" width="560" height="40" rx="8" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="100" y="40" font-size="13" fill="#412402" dominant-baseline="central">智能体发现目标页面属于你，发起 <tspan font-weight="600">tab_borrow</tspan>（借用）</text>
+
+<circle cx="52" cy="98" r="14" fill="#ba7517"/>
+<text x="52" y="98" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">2</text>
+<rect x="80" y="78" width="560" height="40" rx="8" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="100" y="98" font-size="13" fill="#412402" dominant-baseline="central">切换到那个页面，会看到 BrowserSkill 的授权提示</text>
+
+<circle cx="52" cy="156" r="14" fill="#639922"/>
+<text x="52" y="156" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">3</text>
+<rect x="80" y="136" width="560" height="40" rx="8" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="100" y="156" font-size="13" fill="#173404" dominant-baseline="central"><tspan font-weight="600">你点「允许」</tspan> —— 这一步只能由你完成，5 分钟内有效</text>
+
+<circle cx="52" cy="214" r="14" fill="#378add"/>
+<text x="52" y="214" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">4</text>
+<rect x="80" y="194" width="560" height="40" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="100" y="214" font-size="13" fill="#042c53" dominant-baseline="central">智能体读取、操作这个页面（授权通过后自动继续）</text>
+
+<circle cx="52" cy="272" r="14" fill="#378add"/>
+<text x="52" y="272" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">5</text>
+<rect x="80" y="252" width="560" height="40" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="100" y="272" font-size="13" fill="#042c53" dominant-baseline="central">用完 <tspan font-weight="600">tab_return</tspan> 归还 —— <tspan font-weight="600">回到原来的位置，不会被关闭</tspan></text>
+</svg>
+<figcaption>图 4 · 标签借用。核心是「借」而不是「占」：用完要还，而且是还原到原位。</figcaption>
+</figure>
+
+<div class="warn">
+<b>两个容易搞混的点</b><br>
+① <b>「继续操作」不等于「同意借用」</b>。点继续只是恢复被暂停的任务，借用授权必须在<b>目标页面</b>上单独点「允许」。<br>
+② <b>借用被拒绝后，不要反复重试</b>。智能体被拒绝后应该换办法或向你说明，而不是不停请求借用。
+</div>
+
+<h3>场景三 · 人工接管（登录、验证码）</h3>
+<p>遇到登录、短信验证码、图形验证码、二次授权这类<b>只有人能过</b>的关卡，智能体会主动停下来交给你。</p>
+
+<figure>
+<svg viewBox="0 0 680 300" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>人工接管的时序</title>
+<desc>智能体先打开登录页再发起 request_help，用户在浏览器完成操作并确认，智能体收到结果后必须重新观察页面复核。</desc>
+<defs>
+<marker id="ar4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<circle cx="52" cy="40" r="14" fill="#378add"/>
+<text x="52" y="40" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">1</text>
+<rect x="80" y="20" width="560" height="40" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="100" y="40" font-size="13" fill="#042c53" dominant-baseline="central">智能体先 <tspan font-weight="600">打开登录页</tspan>（不是空喊「请登录」）</text>
+
+<circle cx="52" cy="98" r="14" fill="#378add"/>
+<text x="52" y="98" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">2</text>
+<rect x="80" y="78" width="560" height="40" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="100" y="98" font-size="13" fill="#042c53" dominant-baseline="central">发起 <tspan font-weight="600">request_help</tspan>，附上一句具体的操作说明</text>
+
+<circle cx="52" cy="156" r="14" fill="#ba7517"/>
+<text x="52" y="156" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">3</text>
+<rect x="80" y="136" width="560" height="40" rx="8" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="100" y="156" font-size="13" fill="#412402" dominant-baseline="central"><tspan font-weight="600">预览小窗显示提示</tspan>，可点「定位到浏览器」跳过去</text>
+
+<circle cx="52" cy="214" r="14" fill="#639922"/>
+<text x="52" y="214" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">4</text>
+<rect x="80" y="194" width="560" height="40" rx="8" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="100" y="214" font-size="13" fill="#173404" dominant-baseline="central"><tspan font-weight="600">你完成操作</tspan>（扫码 / 输验证码），在浏览器提示里确认完成</text>
+
+<circle cx="52" cy="272" r="14" fill="#a32d2d"/>
+<text x="52" y="272" font-size="13" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="central">5</text>
+<rect x="80" y="252" width="560" height="40" rx="8" fill="#fcebeb" stroke="#e24b4a" stroke-width="0.5"/>
+<text x="100" y="272" font-size="13" fill="#501313" dominant-baseline="central">智能体收到后 <tspan font-weight="600">重新观察页面复核</tspan> —— 没登录成功就再请求一次</text>
+</svg>
+<figcaption>图 5 · 人工接管。第 5 步的「复核」是硬要求，不是可选项。</figcaption>
+</figure>
+
+<div class="warn">
+<b>记住这两条</b><br>
+① <b>「调用成功」不等于「登录成功」</b>。智能体收到你确认后，必须重新看一眼页面才能继续；它不会凭页面上出现「欢迎」两个字就宣布登录成功。<br>
+② <b>等待上限 5 分钟</b>。超时或取消会保留页面并暂停任务，你在预览里点「继续操作」就能接着来，<b>不需要重新配对</b>。
+</div>
+
+<div class="tip">
+<b>ⓘ 为什么有时候「没有弹出提示」？</b>人工接管必须由智能体主动发起才会显示。如果它只是在回复里写了句「请登录后告诉我」，那是它没按规矩来，不会有任何提示，页面也不会保留。这时可以直接提醒它：「调用 request_help」。
+</div>
+
+<!-- ============ 6 ============ -->
+<h2 id="s6"><span class="num">6</span>任务的一生：开始、暂停、结束</h2>
+
+<figure>
+<svg viewBox="0 0 680 260" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>任务生命周期</title>
+<desc>任务创建后运行，一轮结束后按 keep_open 决定保留还是回收；可暂停后继续；结束任务关闭新建标签并归还借用标签。</desc>
+<defs>
+<marker id="ar5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="40" y="20" width="150" height="52" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="115" y="38" font-size="14" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">任务创建</text>
+<text x="115" y="58" font-size="12" fill="#185fa5" text-anchor="middle" dominant-baseline="central">首次调用时</text>
+
+<rect x="265" y="20" width="150" height="52" rx="8" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="340" y="38" font-size="14" font-weight="600" fill="#173404" text-anchor="middle" dominant-baseline="central">运行中</text>
+<text x="340" y="58" font-size="12" fill="#3b6d11" text-anchor="middle" dominant-baseline="central">智能体在操作</text>
+
+<rect x="490" y="20" width="150" height="52" rx="8" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="565" y="38" font-size="14" font-weight="600" fill="#412402" text-anchor="middle" dominant-baseline="central">一轮结束</text>
+<text x="565" y="58" font-size="12" fill="#854f0b" text-anchor="middle" dominant-baseline="central">按 keep_open 分岔</text>
+
+<path d="M190 46H260" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar5)"/>
+<path d="M415 46H485" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar5)"/>
+
+<rect x="490" y="100" width="150" height="52" rx="8" fill="#fcebeb" stroke="#e24b4a" stroke-width="0.5"/>
+<text x="565" y="118" font-size="14" font-weight="600" fill="#501313" text-anchor="middle" dominant-baseline="central">回收</text>
+<text x="565" y="138" font-size="12" fill="#a32d2d" text-anchor="middle" dominant-baseline="central">关新建标签·还借用标签</text>
+
+<rect x="265" y="100" width="150" height="52" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="340" y="118" font-size="14" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">保留</text>
+<text x="340" y="138" font-size="12" fill="#185fa5" text-anchor="middle" dominant-baseline="central">页面原样不动</text>
+
+<path d="M565 72V95" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar5)"/>
+<path d="M520 72H400V95" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar5)"/>
+<text x="576" y="86" font-size="11" fill="#854f0b">默认</text>
+<text x="408" y="88" font-size="11" fill="#854f0b">keep_open</text>
+
+<rect x="40" y="180" width="150" height="52" rx="8" fill="#f1efe8" stroke="#888780" stroke-width="0.5"/>
+<text x="115" y="198" font-size="14" font-weight="600" fill="#2c2c2a" text-anchor="middle" dominant-baseline="central">已暂停</text>
+<text x="115" y="218" font-size="12" fill="#5f5e5a" text-anchor="middle" dominant-baseline="central">页面保留</text>
+
+<rect x="265" y="180" width="150" height="52" rx="8" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="340" y="198" font-size="14" font-weight="600" fill="#173404" text-anchor="middle" dominant-baseline="central">继续操作</text>
+<text x="340" y="218" font-size="12" fill="#3b6d11" text-anchor="middle" dominant-baseline="central">同一对话接着来</text>
+
+<path d="M190 206H260" fill="none" stroke="#639922" stroke-width="1.5" marker-end="url(#ar5)"/>
+<path d="M340 152V177" fill="none" stroke="#888780" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar5)"/>
+<text x="350" y="166" font-size="11" fill="#5f5e5a" dominant-baseline="central">下一轮继续</text>
+
+<text x="465" y="198" font-size="12" fill="#5f5e5a" dominant-baseline="central">暂停不关页面，只是停止操作</text>
+<text x="465" y="218" font-size="12" fill="#5f5e5a" dominant-baseline="central">结束后画面定格在最后一帧</text>
+</svg>
+<figcaption>图 6 · 任务生命周期。注意「保留」和「暂停」都会保住页面，区别是谁在等谁。</figcaption>
+</figure>
+
+<h3>三种收尾方式</h3>
+<table>
+<tr><th style="width:20%">方式</th><th style="width:26%">发生时机</th><th>页面怎么处理</th></tr>
+<tr><td class="n">自动回收<br><span class="sub">默认</span></td><td>一轮任务顺利做完</td><td>关闭任务新建的标签，<b>归还</b>借用的标签</td></tr>
+<tr><td class="n">保留<br><span class="sub">keep_open</span></td><td>你要留着这个页面（表单没填完、要你自己看）</td><td>整项任务原样保留，下一轮继续用</td></tr>
+<tr><td class="n">暂停</td><td>你点暂停 / 断线 / 人工步骤超时</td><td>页面全部保留，等你点「继续操作」</td></tr>
+</table>
+
+<div class="tip">
+<b>ⓘ 出错时也保现场</b>：任务报错、被取消、被暂停，都会保留页面不清理——方便你接着处理。只有<b>顺利完成</b>才会自动回收。
+</div>
+
+<!-- ============ 7 ============ -->
+<h2 id="s7"><span class="num">7</span>预览小窗：你的控制台</h2>
+
+<p>对话里那个小窗口是你观察和控制任务的唯一入口。</p>
+
+<h3>按钮</h3>
+<table>
+<tr><th style="width:26%">按钮</th><th>作用</th></tr>
+<tr><td class="n">定位到浏览器</td><td>跳到 Chrome 里的任务窗口</td></tr>
+<tr><td class="n">暂停操作</td><td>中断当前浏览器操作，<b>保留页面</b>；不会停止整段对话</td></tr>
+<tr><td class="n">继续操作</td><td>恢复被暂停的任务，在同一对话里接着来</td></tr>
+<tr><td class="n">结束浏览器任务</td><td>关闭任务新建的标签、归还借用的标签；<b>不会</b>关闭 Chrome，也<b>不会</b>撤销配对</td></tr>
+<tr><td class="n">弹出悬浮窗</td><td>把预览和按钮移到置顶小窗，方便边看边操作</td></tr>
+</table>
+
+<h3>画面状态</h3>
+<table>
+<tr><th style="width:26%">显示</th><th>含义</th></tr>
+<tr><td class="n">画面同步中</td><td>正在实时刷新</td></tr>
+<tr><td class="n">已保留最后画面</td><td>这一轮结束了，画面定格</td></tr>
+<tr><td class="n">画面暂未更新</td><td>超过 5 秒没拿到新画面，检查扩展是否正常</td></tr>
+<tr><td class="n">等待任务页面</td><td>任务刚发起，页面还没创建好</td></tr>
+</table>
+
+<div class="warn">
+<b>预览不是视频</b>：它是约每秒 1 帧的低帧率截图同步，用来「知道在干嘛」，不适合看动画或快速变化的画面。要看清细节，让智能体用 <code>screenshot</code> 截高清图。
+</div>
+
+<!-- ============ 8 ============ -->
+<h2 id="s8"><span class="num">8</span>智能体能做哪些动作</h2>
+
+<p>工具名是 <code>local_browser</code>，一共 26 个动作。你不需要记住它们——只要知道它能干什么，描述任务时说人话即可。</p>
+
+<table>
+<tr><th style="width:20%">类别</th><th>动作</th></tr>
+<tr><td class="n">看</td><td><code>observe</code> 页面文字和可操作元素 · <code>snapshot</code> 结构快照 · <code>screenshot</code> 截图 · <code>get_html</code> 源码</td></tr>
+<tr><td class="n">走</td><td><code>navigate</code> 打开网址 · <code>navigate_back</code> / <code>navigate_forward</code> 前进后退 · <code>reload</code> 刷新</td></tr>
+<tr><td class="n">动</td><td><code>click</code> 点击 · <code>fill</code> 填写 · <code>press</code> 按键 · <code>hover</code> 悬停 · <code>select</code> 选下拉 · <code>focus</code> / <code>blur</code></td></tr>
+<tr><td class="n">滚</td><td><code>wheel</code> 滚动 · <code>scroll_to</code> 滚动到某元素</td></tr>
+<tr><td class="n">管标签</td><td><code>tab_list</code> 列出 · <code>tab_create</code> 新建 · <code>tab_select</code> 切换 · <code>tab_close</code> 关闭 · <code>tab_borrow</code> 借用 · <code>tab_return</code> 归还</td></tr>
+<tr><td class="n">等</td><td><code>wait_for_navigation</code> 等跳转 · <code>wait_ms</code> 等一会儿</td></tr>
+<tr><td class="n">调试</td><td><code>evaluate</code> 执行脚本 · <code>console</code> 看控制台 · <code>network</code> 看网络请求 · <code>window_resize</code> · <code>emulate</code> 模拟设备</td></tr>
+<tr><td class="n">找你</td><td><code>request_help</code> 请你操作</td></tr>
+</table>
+
+<div class="tip">
+<b>ⓘ 它怎么「看见」页面？</b>不是靠猜坐标。它会先用 <code>observe</code> 把页面扫一遍，给每个可操作元素编个号（比如 <code>e3</code>），然后说「点 e3」。所以页面变了之后要重新 <code>observe</code>，否则会点到旧元素。
+</div>
+
+<!-- ============ 9 ============ -->
+<h2 id="s9"><span class="num">9</span>排错指南</h2>
+
+<table>
+<tr><th style="width:30%">现象</th><th style="width:26%">原因</th><th>怎么办</th></tr>
+<tr><td class="n">「服务端尚未启用本机浏览器」</td><td>服务端没配置</td><td>找管理员，见第 10 章</td></tr>
+<tr><td class="n">「管理员尚未配置扩展下载包」</td><td>扩展包路径没配</td><td>找管理员要配套版本的 ZIP</td></tr>
+<tr><td class="n">配对链接用不了</td><td>5 分钟过期或已用过</td><td>回设置页重新复制一次</td></tr>
+<tr><td class="n">扩展连上就断</td><td>Chrome 关了或扩展被禁用</td><td>保持 Chrome 和扩展开启，它会自动重连，<b>不用重新配对</b></td></tr>
+<tr><td class="n">「扩展缺少任务控制」</td><td>装的是官方原版扩展</td><td>下载本服务提供的配套 ZIP，覆盖后重新加载</td></tr>
+<tr><td class="n">任务一直暂停</td><td>人工步骤超时或你中断过</td><td>点预览里的「继续操作」</td></tr>
+<tr><td class="n">借用标签总失败</td><td>没在目标页面点允许</td><td>切到那个页面，在提示里点「允许」；拒绝后别反复重试</td></tr>
+<tr><td class="n">登录页弹了但没提示</td><td>智能体没调用 request_help</td><td>提醒它「调用 request_help」</td></tr>
+<tr><td class="n">画面卡住不动</td><td>预览取不到画面</td><td>看是否显示「画面暂未更新」，检查扩展；必要时结束任务重来</td></tr>
+</table>
+
+<div class="ok">
+<b>排错第一原则</b>：绝大多数问题<b>不需要重新配对</b>。重新配对是最后手段——它会让所有进行中的任务失效。先试「继续操作」，再试刷新页面，最后才考虑撤销授权重新配对。
+</div>
+
+<!-- ============ 10 ============ -->
+<h2 id="s10"><span class="num">10</span>管理员：启用前必须满足的条件</h2>
+
+<p>这一章给部署和维护的人看。</p>
+
+<h3>硬性前提：镜像里得有这两个文件</h3>
+<div class="q">
+<code>BROWSERSKILL_BINARY=/opt/weknora/browserskill/bsk</code><br>
+<code>BROWSERSKILL_EXTENSION_PATH=/opt/weknora/browserskill/browser-skill-weknora-0.3.0.zip</code>
+</div>
+
+<p>这两个文件由官方 <code>docker/Dockerfile.app</code> 的独立构建阶段生成：从 <code>Tencent/BrowserSkill</code> 固定提交克隆源码 → 应用 <code>patches/browserskill/*.patch</code> → 用 Cargo 编译。构建需要 Rust/Cargo、Node、C 编译器（Linux 还需 CMake），以及能访问上游源码和依赖的网络。</p>
+
+<div class="warn">
+<b>最容易踩的坑</b>：<b>旧版 app 镜像里没有 <code>/opt/weknora/browserskill/</code> 这个目录</b>，功能等于没启用，界面只会显示「服务端尚未启用本机浏览器」。升级镜像后要用 <code>docker compose up -d app</code> 重建容器——<code>restart</code> 不会加载新环境变量。
+</div>
+
+<h3>配置</h3>
+<table>
+<tr><th style="width:34%">变量</th><th style="width:22%">默认</th><th>说明</th></tr>
+<tr><td class="n">BROWSERSKILL_BINARY</td><td>镜像已预设</td><td>bsk 可执行文件路径；<b>设为空可关闭此功能</b></td></tr>
+<tr><td class="n">BROWSERSKILL_EXTENSION_PATH</td><td>镜像已预设</td><td>供用户下载的扩展 ZIP</td></tr>
+<tr><td class="n">BROWSERSKILL_PUBLIC_URL</td><td>不设</td><td><b>通常不必配</b>——默认从用户页面地址推导（HTTPS→WSS）。仅网关独立域名等特殊情况才设</td></tr>
+<tr><td class="n">BROWSERSKILL_MAX_CONNECTIONS</td><td>32</td><td>单个服务实例保留的配对数上限</td></tr>
+<tr><td class="n">BROWSERSKILL_INTERNAL_URL</td><td>不设</td><td><b>多副本才需要</b>：填各节点可直连的地址，不能用负载均衡地址</td></tr>
+<tr><td class="n">BROWSERSKILL_CLUSTER_SECRET</td><td>不设</td><td><b>多副本才需要</b>：所有副本用同一个随机串，至少 32 字符</td></tr>
+</table>
+
+<h3>网络与部署</h3>
+<ul>
+<li><b>远程部署必须 WSS</b>（即必须先有 HTTPS）。内网可用企业 CA 证书</li>
+<li>外层还有 Ingress/Nginx 时，要为扩展路径转发 WebSocket 升级</li>
+<li>直接暴露 app 的部署，须自行屏蔽公网对 <code>/api/v1/local-browser/internal</code> 的访问</li>
+<li>本机调试可用 <code>ws://localhost:8080/api/v1/local-browser/extension</code></li>
+</ul>
+
+<h3>扩展升级</h3>
+<p>扩展版本更新后，即使版本号没变（例如同是 0.3.0 但源码基线变了），也要通知用户<b>重新下载 ZIP、覆盖原解压目录、在扩展页面重新加载</b>。只重启服务端不会更新用户浏览器里的扩展。保持原扩展 ID 时，旧的本地凭据会自动迁移；如果重装导致 ID 变了，用户必须重新配对。</p>
+
+<footer>
+<p><b>本手册的依据</b>：全部结论来自 WeKnora 源码与实际界面文案，未做推测性补充。主要来源：
+<code>internal/browserskill/manager.go</code>（连接、配对、转发）、
+<code>internal/browserskill/authorization.go</code>（授权与扩展分发）、
+<code>internal/browserskill/human.go</code>（人工步骤超时）、
+<code>internal/browserskill/focus.go</code>（预览旁路）、
+<code>internal/agent/tools/browserskill_schema.go</code>（动作清单）、
+<code>internal/agent/tools/browserskill_prompt.go</code>（操作契约）、
+<code>docs/browser-skill-integration.md</code>（官方集成说明）、
+<code>my-frontend/src/i18n/locales/zh-CN.ts</code>（界面文案）。</p>
+</footer>
+
+</div>
+</body>
+</html>
