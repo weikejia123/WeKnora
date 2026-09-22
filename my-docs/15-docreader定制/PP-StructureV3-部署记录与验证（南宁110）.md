@@ -318,7 +318,7 @@ INFO ppsv3: parsed 3 page(s) in 2.4s (fileType=0, pdf=True)
 ⇒ **`##` 标题层级正确、段落完整、金额与数字全对**，且**页码已剔除**。
 对比同一份文档走 `builtin + 多模态`（老魏实测的碎片化输出），段落完整性明显更好。
 
-#### ⑤ 两个能力边界（决策相关，启用前必须知道）
+#### ⑤ 三个能力边界（决策相关，启用前必须知道）
 
 **① 粒度只到「按文件类型」**
 
@@ -340,6 +340,41 @@ WeKnora 的**知识库级**引擎选择只到「**按文件类型**」这一层
 ⇒ **含义**：把某个库的 `pdf` 指向 `PaddleOCR-VL` 是**「一刀切」**。
 纯电子版 PDF 为主的库**不建议**这么配（会白慢一轮，且 OCR 结果可能不如直接抽文本层）。
 **最稳的做法仍是按库分开**：扫描件库配它，电子版库保持 `anydoc` / `builtin`。
+
+**③ ★ 图片会被静默丢弃 —— 若无 `![]()` 引用则一张不留（2026-09-22 实测查清）**
+
+真实上传时日志出现矛盾：`parsed 38 page(s), **images=35**` 但紧接着
+`Parsed successfully, markdown=120720 chars, **images=0**` —— **35 张图被丢弃**。
+
+**原因**（`paddleocr_vl_converter.go:216-225`）：WeKnora 只提取「**markdown 正文里有引用**」
+的图片 ——
+
+```go
+for ipath, b64Str := range imagesB64 {
+    matchedRefs := mineruImageOriginalRefs(mdContent, ipath)
+    if len(matchedRefs) == 0 { continue }   // ← 无引用即静默丢弃，不报错
+```
+
+**实测定性（单页表格页定向验证）**：
+
+| 项 | 结果 |
+|---|---|
+| `markdown.images` | **1 项**，键名 `imgs/**img_in_table_box**_90_158_1104_1544.jpg` |
+| `markdown.text` 里的 `![]()` 引用 | **无** |
+| `markdown.text` 里的 `<table>` | **有** |
+| 图片键是否出现在 text 中 | **❌ 否** |
+
+⇒ **这批图是「表格区域的原始截图」**（键名 `in_table_box`），
+而**同一张表的识别结果（HTML）已经在 markdown.text 里** ⇒ **丢弃不损失信息**
+（数目 35 也正好等于表格页数 35）。
+
+> ⚠️ **但存在真实隐患**：若文档里有**真正的插图**（图表 / 照片 / 流程图），
+> 它们同样没有 `![]()` 引用 ⇒ **同样会被静默丢弃**，且**下游 `multimodal` 阶段不会再补**
+> （它只在有 `image_info` 的 chunk 上工作）⇒ **插图内容彻底消失**，既不进正文也不生成 caption。
+>
+> 本次样本（审计报告扫描件）版面标签统计为 `table:35 / text:10 / paragraph_title:3 /
+> figure_title:1 / number:38` ⇒ **基本无插图，故本次无害**。
+> 但对「含大量插图的扫描件」需另作处理（例如在服务侧把图片以 `![](…)` 形式内联进 markdown）。
 
 #### ⑥ 测试残留已清理
 
