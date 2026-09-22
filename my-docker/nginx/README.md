@@ -35,7 +35,8 @@ BrowserSkill 配对时，后端要求**非 localhost 必须 `wss`**
 页面报 **`BrowserSkill public URL requires WSS`**。
 
 上游立场（原文）：
-- `.env.example:779`：「远程部署必须使用 WSS（**包括内网**）」
+- `.env.example` 的 `BROWSERSKILL_PUBLIC_URL` 段：「远程部署必须使用 WSS（**包括内网**）」
+  （用段名定位而非行号 —— 行号会随上游插行静默失真，实测该引用已从 779 漂到 785）
 - `docs/browser-skill-production.md:88`：「WSS 可以使用**企业 CA，无需公网**；远程明文 WS 不受支持」
 
 本层让页面以 `https://` 打开、配对链接自然推导为 `wss://`。**两个前端都受益**。
