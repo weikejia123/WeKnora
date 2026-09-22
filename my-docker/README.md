@@ -101,6 +101,15 @@ $C up -d           # 启动整个容器组
 ./deploy/deploy-wkj-dev.sh compose-diff   # 复核我们相对官方改了什么
 ```
 
+**日常改代码不必重建镜像** —— 应用代码分四层外置在宿主目录（见第八章），
+投递命令各管一层：
+
+| 命令 | 更新哪一层 | 生效方式 |
+|---|---|---|
+| `push-ui` | `my-frontend/dist` → 前端静态文件 | 立即可见，**无需重启** |
+| `push-reader` | `docreader/` → 解析器源码 | 重启 docreader，秒级 |
+| `push-app` | `.build/WeKnora` → 后端二进制<br>＋ `migrations/` → 迁移文件（随代码同步） | 重启 app；**新迁移在此刻执行** |
+
 ## 四、`.env` 在哪
 
 **仍在仓库根**（`<仓库根>/.env`），不在本目录。
@@ -178,3 +187,5 @@ diff -r frontend my-frontend                     # 复查差异面仍只有你�
 | **副本里的 dotfile 要 `git add -f`** | 根 `.gitignore:2` 的 `.*` 规则会拦下新文件；官方 `frontend/.dockerignore` 因**早已被跟踪**而豁免，副本是新文件 ⇒ 会被漏掉，导致 111 上**没有 `.dockerignore`**（Docker 只在 context 根找它，不会向上找）。已用 `-f` 纳入。<br>★ 以后在副本里新增任何 dotfile 同样要 `-f`；若允许改官方 `.gitignore`，加一条 `!my-frontend/.*` 更省事 |
 | **`package.json.md5` 是失效文件** | 记录值与当前 `package.json` 不符，但全仓无引用、且被 `.dockerignore` 排除 ⇒ 不影响构建。保留它只为与官方一致 |
 | **运行时可配只有 4 项** | `MAX_FILE_SIZE_MB` / `MAX_SKILL_BUNDLE_SIZE_MB` / `DEFAULT_LOCALE`（+ `EMBED_BASE_URL` 在 `public/config.js`），其余改动都要动源码 |
+| **应用代码分四层外置** | `my-frontend/dist`（前端静态）/ `docreader`（解析器）/ `.build/WeKnora`（二进制）/ `migrations`（迁移文件）。都从宿主目录取 ⇒ **改代码不必重建镜像**，绕开国内构建链。挂载源分两类：**受 git 管理**（`docreader/`、`migrations/`）随 `sync_code` 的 `reset` 更新；**本地产物**（`my-frontend/dist`、`.build/WeKnora`）由 `push-ui` / `push-app` 投递 |
+| **迁移外置的两个硬约束** | ① **宿主目录必须存在且非空** —— 迁移器报错会被 `AUTO_MIGRATE` 的 warn 分支吞掉（`container.go` 的 "don't fail startup"）⇒ app 照常 healthy，迁移却**静默不跑**；镜像方式下无此故障面。② **改这四条挂载必须重建容器**（`up -d`，`restart` 不生效）⇒ `push-app` 已内置两处挂载的判据，缺一即自动改走重建 |

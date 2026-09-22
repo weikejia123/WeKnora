@@ -57,6 +57,11 @@
 #    14. searxng-init.volumes      官方模板 → ./my-docker/searxng/settings.yml（!override）
 #    15. neo4j.ports               7474:7474 + 7687:7687 → 127.0.0.1:41292:7474
 #                                  + 127.0.0.1:41293:7687（!override）
+#    16. frontend-wkj.volumes       +./my-frontend/dist:/usr/share/nginx/html
+#    17. docreader.volumes          +./docreader:/app/docreader:ro
+#    18. app.volumes                +./.build/WeKnora:/app/WeKnora:ro
+#    19. app.volumes                +./migrations:/app/migrations:ro
+#   ⇒ 16–19 是**同一件事的四层**：应用代码外置（改代码不必重建镜像 / 不走国内构建链）。
 #   ⇒ 用 `./deploy/deploy-wkj-dev.sh compose-diff` 可随时复核（**仅覆盖 compose 层**）。
 #
 # ★ 官方**源码文件**的改动（compose-diff 看不到，须用 git 比对）：
@@ -193,8 +198,29 @@ services:
   #   容器 ENTRYPOINT 直接失败。故首次启用的顺序是「**先** push-app 产出、
   #   **再** up -d app」；push-app 已内置挂载检测，会自动改走重建。
   # ★ 与官方既有的三条挂载（data-files / docreader-tmp / config.yaml）是**追加**关系。
+  #
+  # ── 迁移文件外置（2026-09-22）：应用代码外置的第二层，理由同上
+  # 落点依据：迁移器读的是**相对路径** `file://migrations/versioned`（见
+  #   internal/database/migration.go 的 RunMigrationsWithOptions），相对容器
+  #   WORKDIR `/app` ⇒ 正是本挂载点，无需任何配置项。
+  # 为什么必须外置：二进制是单文件外置的，而 `migrations/` 仍来自镜像
+  #   ⇒ push-app 换了代码**换不到迁移** ⇒ 官方新迁移永远不生效。
+  #   2026-09-22 实测踩到：容器内只到 000108，代码已含 000109，且新代码的
+  #   Session 模型带该列且无 `gorm:"-"` ⇒ 列不存在会让**所有会话查询报错**。
+  # 生效方式：宿主 ./migrations 由 sync_code 的 `git reset --hard` 更新
+  #   ⇒ push-app 一次动作即「新二进制 + 新迁移」同时到位。
+  # ★ 首次启用需 `up -d app` 重建（挂载在容器创建时固定，restart 不生效），
+  #   之后 push-app 的 restart 即能读到新迁移。
+  # ★ 宿主目录必须**存在且非空**：迁移器报错会被 AUTO_MIGRATE 的 warn 分支
+  #   吞掉（internal/container/container.go 的 "Log warning but don't fail
+  #   startup"）⇒ app 照常启动、迁移却静默不跑。镜像方式下此故障面不存在
+  #   （镜像里必有文件），外置后需靠宿主目录保证。
+  # ★ 回滚语义：把分支指针回退到旧提交会**同时**回退二进制与迁移目录，
+  #   而数据库版本不会跟着退 ⇒ 出现「库版本 > 文件版本」。升级前先看启动
+  #   日志的 Current migration version 与容器内文件名核对。
     volumes:
       - ./.build/WeKnora:/app/WeKnora:ro
+      - ./migrations:/app/migrations:ro
     build:
       args:
         # 官方 compose 未 wire 这两个 ARG（Dockerfile.app 已声明）⇒ Go 会回落到

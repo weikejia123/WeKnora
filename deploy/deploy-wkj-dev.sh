@@ -13,11 +13,14 @@
 # 用法：
 #   ./deploy-wkj-dev.sh deploy      首次部署 / 完整部署（幂等，可重复执行）
 #   ./deploy-wkj-dev.sh update      更新：推代码 → 拉取 → 重建容器
-#   ./deploy-wkj-dev.sh sync        只同步代码到 111（**不碰容器**，故不触发 DB 自动迁移）
-#   ./deploy-wkj-dev.sh up          只按当前编排重建容器（不 pull / 不 build）—— 改编排后用它生效
+#   ./deploy-wkj-dev.sh sync        只同步代码到 111（**不碰容器**。注意：外置的 ./migrations
+#                                   会随之更新，但 app 不重启 ⇒ 新迁移要等下次 app 启动才执行）
+#   ./deploy-wkj-dev.sh up          只按当前编排重建容器（不 pull / 不 build）—— 改编排后用它生效，
+#                                   重建 app 时新迁移随启动自动执行
 #   ./deploy-wkj-dev.sh push-ui     构建前端并投递到 111（**无需重启**，立即可见）
 #   ./deploy-wkj-dev.sh push-reader 同步代码并重启 docreader（Python 免编译，秒级）
 #   ./deploy-wkj-dev.sh push-app    编译 app 并投递到 111（编译镜像；**首次启用会重建容器**）
+#                                   一次动作同时更新「二进制 + 迁移」两样外置件
 #   ./deploy-wkj-dev.sh build       二开构建：在 111 上构建镜像后重启
 #   ./deploy-wkj-dev.sh status      查看容器状态
 #   ./deploy-wkj-dev.sh logs [svc]  查看日志（默认 app）
@@ -620,6 +623,38 @@ REMOTE_UP
   ok "容器已启动"
 }
 
+# ------------------------------------------------------------------ 迁移一致性
+# 外置迁移的**全部意义**是「一次 push-app / up = 新二进制 + 新迁移」，所以必须
+#   核到实际生效，而不是只看文件拷没拷过去。两道判据：
+#     ① 容器内迁移文件名 = 仓库（挂载是否真的指到了更新后的目录）
+#     ② 库版本 = 文件最高版本（迁移器是否真的跑了）—— 这是"跑没跑"的唯一证据
+#   ★ 为什么必须查：迁移器失败时 AUTO_MIGRATE 只 warn 不退出（container.go），
+#     app 照常 healthy ⇒ 「服务正常」完全掩盖「迁移没跑」。2026-09-22 就因为
+#     容器内停在 000108 而新代码要读 000109 的列，差点让所有会话查询报错。
+check_migrations() {
+  local repo_latest ctr_latest db_ver
+  repo_latest="$(basename "$(ls "$REPO_ROOT"/migrations/versioned/*.up.sql | sort | tail -1)" | cut -d_ -f1)"
+  ctr_latest="$(ssh "$SSH_HOST" "docker exec WeKnora-app sh -c 'ls /app/migrations/versioned/*.up.sql 2>/dev/null | sort | tail -1'" 2>/dev/null \
+                | tr -d '\r' | xargs -n1 basename 2>/dev/null | cut -d_ -f1)"
+  printf '  仓库最新迁移: %s\n  容器内最新:   %s\n' "${repo_latest:-?}" "${ctr_latest:-取不到}"
+  if [ -n "$ctr_latest" ] && [ "$repo_latest" = "$ctr_latest" ]; then
+    ok "外置迁移已同步（容器内 = 仓库）"
+  else
+    warn "外置迁移未同步：仓库 ${repo_latest:-?} / 容器内 ${ctr_latest:-取不到}"
+    log  "  查 111 的 $REMOTE_DIR/migrations（sync_code 的 reset 可能被跳过）"
+  fi
+
+  db_ver="$(ssh "$SSH_HOST" "cd $REMOTE_DIR && set -a && . ./.env && set +a && docker exec -e PGPASSWORD=\"\$DB_PASSWORD\" WeKnora-postgres psql -U \"\$DB_USER\" -d \"\$DB_NAME\" -Atc \"SELECT version||'/'||dirty FROM schema_migrations\"" 2>/dev/null | tr -d '\r' | tail -1)"
+  if [ -z "$db_ver" ]; then
+    warn "取不到库迁移版本（postgres 未起或 .env 变量缺失）"
+  elif [ -n "$repo_latest" ] && [ "$((10#${db_ver%%/*}))" -eq "$((10#${repo_latest}))" ] 2>/dev/null; then
+    ok "库迁移版本 = ${db_ver}（与文件最高版本一致 ⇒ 已执行）"
+  else
+    warn "库迁移版本 ${db_ver} ≠ 文件最高版本 ${repo_latest} ⇒ 迁移可能未执行"
+    log  "  证据：$DC logs app | grep -i 'migration version'"
+  fi
+}
+
 # ------------------------------------------------------------------ 健康检查
 health_check() {
   step "⑤ 健康检查"
@@ -716,6 +751,9 @@ health_check() {
     log  "  启动：ssh $SSH_HOST 'cd $REMOTE_DIR && $DC up -d neo4j'"
   fi
 
+  # 迁移一致性（外置迁移的必查项 —— 见 check_migrations 的说明）
+  check_migrations
+
   printf '\n'
   printf '%s╭─────────────────────────────────────────────────────────────╮%s\n' "$C_OK" "$C_OFF"
   printf '%s│  部署完成%s                                                    │\n' "$C_OK" "$C_OFF"
@@ -787,6 +825,10 @@ cmd_push_reader() {
 cmd_push_app() {
   # 编译 app 并投递到映射目录，再让 app 加载它。
   #   —— 不重建镜像；**首次启用**会重建一次容器（挂载在容器创建时固定，restart 不生效）。
+  # ★ 一次 push-app 同时更新**两样**外置件：
+  #     ① 二进制 .build/WeKnora（本函数编译投递）
+  #     ② 迁移文件 ./migrations（由 sync_code 的 git reset 提供，无需投递动作）
+  #   ⇒ 官方新迁移随本次动作生效，不必重建镜像。详见 overlay 的 app 段注释。
   #
   # ★ 为什么用「编译镜像」而不是 docker build 全流程：
   #   现有 build 要走 browserskill + builder + final + 镜像 commit + 容器重建；
@@ -854,23 +896,36 @@ REMOTE_APP_BUILD
 
   step "② 让 app 加载新二进制"
   # ★ 首次启用必须先**重建容器**：挂载是容器创建时固定的，`restart` 只换进程、
-  #   不会应用 overlay 新增的 `./.build/WeKnora:/app/WeKnora` 挂载
+  #   不会应用 overlay 新增的挂载
   #   ⇒ 会出现"编译成功、也重启了、跑的还是镜像内那份旧二进制"。
-  #   判据 = 容器已挂载列表中是否含 destination `/app/WeKnora`。
-  if ssh "$SSH_HOST" "docker inspect WeKnora-app --format '{{range .Mounts}}{{.Destination}} {{end}}'" \
-       2>/dev/null | grep -q '/app/WeKnora'; then
+  #   判据 = 容器挂载列表中是否**同时**含 `/app/WeKnora`（外置二进制）与
+  #     `/app/migrations`（外置迁移）。**两者缺一都要重建** —— 只判前者时，
+  #     后来新增的迁移挂载会被这个分支静默跳过（2026-09-22 加迁移外置时踩到）。
+  local mounted
+  mounted="$(ssh "$SSH_HOST" "docker inspect WeKnora-app --format '{{range .Mounts}}{{.Destination}} {{end}}'" 2>/dev/null || true)"
+  if [[ "$mounted" == *"/app/WeKnora"* && "$mounted" == *"/app/migrations"* ]]; then
     ssh "$SSH_HOST" "$DC restart app"
-    ok "已重启 app（容器未重建 ⇒ 不触发数据库迁移）"
+    ok "已重启 app（两处外置挂载齐备，容器未重建）"
   else
-    warn "容器尚未挂载外置二进制（首次启用）⇒ 需要重建容器（restart 不会应用新挂载）"
+    warn "容器挂载不完整（缺外置二进制或外置迁移）⇒ 重建容器（restart 不会应用新挂载）"
     ssh "$SSH_HOST" "$DC up -d app"
     ok "已重建 app 容器，外置挂载已生效"
   fi
 
   step "③ 自证：容器内二进制的 commit"
   printf "  期望 commit: %s\n" "$(git -C "$REPO_ROOT" rev-parse --short=8 HEAD)"
-  ssh "$SSH_HOST" "docker exec WeKnora-app grep -ac '$(git -C "$REPO_ROOT" rev-parse --short=8 HEAD)' /app/WeKnora" \
-    | sed 's/^/  实际命中: /'
+  # 注：`grep -c` 给的是**命中行数**（二进制里该 commit 串出现多处），
+  #     不是版本号 —— 判据是「> 0」而非「等于某个数」。
+  local hits
+  hits="$(ssh "$SSH_HOST" "docker exec WeKnora-app grep -ac '$(git -C "$REPO_ROOT" rev-parse --short=8 HEAD)' /app/WeKnora" 2>/dev/null | tr -d '[:space:]')"
+  if [ "${hits:-0}" -gt 0 ] 2>/dev/null; then
+    ok "二进制内嵌 commit 命中 ${hits} 处（>0 即一致）"
+  else
+    warn "二进制内未命中该 commit ⇒ 容器内跑的很可能不是本次产物"
+  fi
+
+  step "④ 自证：迁移文件与库版本"
+  check_migrations
 }
 cmd_build()  { preflight_local; sync_code; ensure_env; compose_up build; health_check; }
 
