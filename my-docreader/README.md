@@ -1,5 +1,11 @@
 # my-docreader —— docreader 定制件
 
+> **状态：已接入，但这条路已搁置**（依赖的 `pp-ocr-v6-gpu-api` 容器已删除
+> ⇒ 现在会按 `PPOCR_FALLBACK=true` **静默降级**成「markitdown 内置 PDF 转换」）。
+> 现行扫描件路径是 **PP-StructureV3**（走 `paddleocr_vl` 引擎）：
+> `my-docs/15-docreader定制/PP-StructureV3-接入与运维（南宁110）.md`。
+> **代码保留。** 恢复方式与坑见 `my-docs/15-docreader定制/WeKnora-docreader接入PP-OCRv6方案.md`。
+
 让 docreader 的 markitdown 引擎在处理**扫描件 PDF** 时改用 110 的 PP-OCRv6，
 而不是走 Go 侧的 VLM。
 
@@ -13,7 +19,7 @@
 | `ppocr_converter.py` | PP-OCRv6 扫描件 PDF 转换器（MarkItDown converter + OCR 客户端 + 二维重组） |
 | `test_ppocr_converter.py` | 本地端到端验证脚本 |
 
-## 接入方式 —— 改 docreader 官方文件 2 行（**待确认**）
+## 接入方式 —— 改 docreader 官方文件 2 行（**已实施**）
 
 `docreader/parser/markitdown_parser.py`：
 

@@ -551,8 +551,9 @@ SSRF_WHITELIST=host.docker.internal,localhost,127.0.0.1,10.168.1.110,10.168.1.11
 **不会失败**（已验证）——Ollama 侧 `OLLAMA_LOAD_TIMEOUT=5m`，且 WeKnora 侧
 embedding 客户端未设超时（`request_timeout_seconds` 未配置 ⇒ `Timeout=0`）。
 
-> 权威记录（改了什么、怎么回滚、实测全表）在 110 的独立仓库：
-> `/opt/docker-deploy/pp-structure-v3/` → `my-docs/30-实施/01-部署实施记录.md` §12.3。
+> 配置与共卡的完整说明在 110 的独立仓库：
+> `/opt/docker-deploy/pp-structure-v3/` → `my-docs/10-现状与运维/`（`01-服务运行现状.md` §7
+> 讲与同机服务的关系；`02-注意事项与坑.md` E 节讲运维操作）。
 
 ---
 
