@@ -455,10 +455,21 @@ WeKnora 发的都是这套请求、读的都是 `markdown.text` ⇒ 对方案一
 
 ## 九、坑位
 
-1. **「测试连接」会假阳性**。`PingPaddleOCRVL` 只发 `GET {endpoint}/layout-parsing`，
-   判定标准是 **`statusCode < 500`** ⇒ 把端点填成一个「没有该路径」的服务（返回 404）时，
-   UI 照样显示**可用绿灯**，但真解析必然失败。**别用这个灯当验收判据**。
-2. **内网地址要进 `SSRF_WHITELIST`**，否则 endpoint 在保存或解析阶段被拦。
+1. **「测试连接」/ 引擎可用状态会假阳性**（★ 2026-09-22 实测确认）。
+   `PingPaddleOCRVL` 只发 `GET {endpoint}/layout-parsing`，判定标准是 **`statusCode < 500`**
+   （`paddleocr_vl_converter.go:281-292`，注释原文 *"an empty GET should still produce a
+   routed HTTP response (e.g. 404/405) when the service is up"*）⇒ 端点指向一个「没有该路径」
+   的服务（返回 404/405）时，UI 与 `GET /system/parser-engines` 的 `Available` 都是 **true**，
+   但真解析未必能跑通。**实测痕迹**：110 的 PP-StructureV3 服务只暴露 POST，
+   探针得到 `405 Method Not Allowed`，WeKnora 判为可用。
+   ⇒ **别用这个灯当验收判据，要用「上传一份真文件看落库分块」。**
+   （本条预测已由 §八 的端到端实测证实：探针绿灯 + 真解析也成功；但绿灯本身不构成证据。）
+2. **内网地址要进 `SSRF_WHITELIST`**，否则 endpoint 在保存阶段就被拦。
+   ★ 实测：保存会走 `validateParserEngineOutboundURLs()` →
+   `secutils.ValidateURLForSSRF()`（`internal/handler/tenant.go:1924-1928`）⇒ 不在白名单
+   **保存就报错**（不是解析时才失败）。110 已在 `deploy/deploy-wkj-dev.sh:256` 的白名单里。
+3. **引擎可用性由「端点是否配置」决定，不是由连通性决定** —— 实测：
+   `paddleocr_vl_endpoint` 为空时 `Available=false`，写入后立刻变 `true`。
 3. **`markitdown` 之类不在此列** —— 见 §三，它们没有 endpoint。
 4. **改了 Go 侧注册表，前端两处列表会自动出现**，但配置抽屉的字段要手工加；
    若漏改 `parser_url_security.go`，保存时不报错、解析时静默失败。

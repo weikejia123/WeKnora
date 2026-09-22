@@ -318,6 +318,18 @@
 ⇒ **服务已部署并跑通**（`110:36742`）。§7.6 的「需腾出 GPU 显存」也确实做了：
 停 `pp-ocr-v6-gpu` + 卸 Ollama 占卡模型后空闲 4.9 GB → **11.5 GB**。
 
+**★ 并且已在 WeKnora 内跑通真实解析**（2026-09-22，详见
+`PP-StructureV3-部署记录与验证（南宁110）.md` §6.5）：
+
+| 验证项 | 结果 |
+|---|---|
+| `PUT /tenants/kv/parser-engine-config` 写 `paddleocr_vl_endpoint` | HTTP 200，落库 ✓（过 SSRF 校验，110 在白名单） |
+| `paddleocr_vl` 引擎可用状态 | `Available` **false → true** ✓ |
+| 上传 3 页扫描件（`pdf→paddleocr_vl`） | 引擎选中 ✓，110 侧收到 `POST /layout-parsing 200` ✓ |
+| 落库分块 | `parse_status=completed`，5 块，`##` 标题层级与段落完整、页码已剔除 ✓ |
+
+⇒ **「协议天然匹配 ⇒ 零代码接入」这句，已从推断变为实测。**
+
 ---
 
 ## 八、★ 与「组合模型」方案的公平对比（含一处估算订正）

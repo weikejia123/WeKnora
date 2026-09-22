@@ -2,8 +2,9 @@
 
 > 日期：2026-09-22 · 目标：在 110 部署 PP-StructureV3 容器，供 WeKnora 解析扫描件 PDF
 >
-> **状态：已完成部署并通过端到端验证**（2026-09-22）。服务运行于
-> `110:36742`，维护仓库在 `110:/opt/docker-deploy/pp-structure-v3/`（独立 git）。
+> **状态：已完成部署，并已在 WeKnora 内跑通真实解析（端到端）**（2026-09-22）。
+> 服务运行于 `110:36742`，维护仓库在 `110:/opt/docker-deploy/pp-structure-v3/`（独立 git）。
+> WeKnora 侧已配置 `paddleocr_vl_endpoint`，实测「上传扫描件 → 落库分块」全链路通（见 §6.5）。
 > 本文档保留**决策依据、预检数据与验证结果**；后续实施细节以该仓库 `my-docs/` 为准。
 >
 > ★ **实施记录已迁至 110 上的独立仓库**：`/opt/docker-deploy/pp-structure-v3/`
@@ -211,10 +212,117 @@ PP-StructureV3 面向「WeKnora 的文档解析后端」。混放会导致 pp-oc
 2. **不支持 `mergeTables`**（WeKnora 请求为 `true`）—— 本次样本主表跨 **35 页**
    ⇒ 会产生 **35 个独立表格块、每页各自带表头**。是否后处理合并待定。
 
-### 6.5 下一步
+### 6.5 ★ WeKnora 侧真实接入验证（端到端，2026-09-22）
 
-配 WeKnora（设置 → 解析引擎 → 填端点 `http://10.168.1.110:36742`）→ 知识库把 `pdf`
-引擎选为该引擎 → 真实入库验证。
+> 起因：老魏追问「你确定 WeKnora 里的 PP-VL 解析引擎可以配置这个 v3 的 apiURL？」
+> —— **此前只验证了服务侧契约（curl 模拟 WeKnora 请求体），那属于「等价简化路径」**。
+> 「零代码接入」当时是**推断**，不是实测。本节把它变成实测。
 
-> ⚠️ 文档至此**不再是「待决策」** —— 决策与部署均已完成；后续维护归
-> `110:/opt/docker-deploy/pp-structure-v3/` 那个独立仓库。
+#### ① 配置入口与校验规则（源码核实）
+
+| 项 | 值 |
+|---|---|
+| 写入接口 | `PUT /api/v1/tenants/kv/parser-engine-config`（Admin） |
+| 字段 | **`paddleocr_vl_endpoint`** |
+| **保存时校验** | **`validateParserEngineOutboundURLs()`** → `secutils.ValidateURLForSSRF(endpoint)`（`internal/handler/tenant.go:1924-1928`） |
+| 存储位置 | `tenants.parser_engine_config`（jsonb） |
+| 权限 | 路由要求 `full_access` API key + `ManageTenantSettings` 能力 |
+
+⇒ **关键**：端点要过 **SSRF 校验**。而 `10.168.1.110` **已在 `SSRF_WHITELIST`** 中
+（`deploy/deploy-wkj-dev.sh:256`）⇒ 这道关能过。
+
+#### ② 实测：配置成功
+
+```
+PUT  {"paddleocr_vl_endpoint":"http://10.168.1.110:36742"}
+→    HTTP 200  {"message":"解析引擎配置已更新","success":true}
+回读 → paddleocr_vl_endpoint = "http://10.168.1.110:36742"
+库内 → tenants.parser_engine_config 已持久化
+```
+
+**引擎可用状态的翻转**（`GET /api/v1/system/parser-engines`）：
+
+| | 配置前 | 配置后 |
+|---|---|---|
+| `paddleocr_vl` | `Available=false`（端点为空的默认态） | **`Available=true`** |
+| 支持的文件类型 | — | `pdf, jpg, jpeg, png, bmp, tiff` |
+
+> 可用性判据 = `PingPaddleOCRVL()`（`engines.go:263`）：
+> 发 `GET {endpoint}/layout-parsing`，**状态码 < 500 即判可用**（`paddleocr_vl_converter.go:281-292`），
+> 注释原文：*"The pipeline only exposes POST /layout-parsing; an empty GET should still
+> produce a routed HTTP response (e.g. 404/405) when the service is up."*
+>
+> ★ **实测确认了此前预测的「假阳性」**：110 侧日志出现
+> `GET /layout-parsing → 405 Method Not Allowed`，而 WeKnora 判为可用。
+> ⇒ **绿灯只证明「服务在，且不是 5xx」，不证明协议能跑通。** 以真实解析为准。
+
+#### ③ 实测：真实解析跑通（决定性证据）
+
+在**新建的临时知识库**里把 `pdf` 引擎设为 `paddleocr_vl`（不动现有任何库）：
+
+```
+chunking_config.parser_engine_rules = [{"file_types":["pdf"],"engine":"paddleocr_vl"}]
+```
+
+上传 3 页纯图片扫描件（`审计结果_扫描版_3页.pdf`，1.6MB，文本层 0 字符），**两侧日志**：
+
+**111（WeKnora）：**
+```
+knowledge_process.go:3921[convert] | [convert] kb=a632117c-… fileType=pdf isURL=false
+                                     engine="paddleocr_vl" rules=[{…}]
+paddleocr_vl_converter.go:56[Read] | [PaddleOCR-VL] Parsing file=审计结果_扫描版_3页.pdf
+                                     size=1666759 via http://10.168.1.110:36742
+paddleocr_vl_converter.go:210      | [PaddleOCR-VL] parsed 3 page(s), images=0
+paddleocr_vl_converter.go:73[Read] | [PaddleOCR-VL] Parsed successfully, markdown=3635 chars, images=0
+```
+
+**110（PP-StructureV3）：**
+```
+10.168.1.111:56128 - "GET  /layout-parsing HTTP/1.1" 405 Method Not Allowed   ← 可用性探测
+INFO ppsv3: parsed 3 page(s) in 2.4s (fileType=0, pdf=True)
+10.168.1.111:42920 - "POST /layout-parsing HTTP/1.1" 200 OK
+```
+
+> `markdown=3635` 是 **Go 的 `len(string)`＝字节数**；3635 字节 ≈ 1387 个中文字符，
+> 与服务侧直测的 1387 字符**一致**（不要误判成「膨胀」）。
+
+#### ④ 实测：落库分块质量（最终效果）
+
+`parse_status=completed`，共 **5 个分块**。抽样：
+
+```
+块0  ## 中央部门单位2025年度预算执行等情况审计结果
+     2025年9月至2026年1月，审计署重点审计了39个部门及所属 229 家单位…此次共发现各类问题金额 170.01 亿元…
+
+块1  ## 一、 违反财经纪律等行为仍有发生
+     （一）依托部门行政资源和影响力谋利。一是7个部门的16 家所属单位…9201.51 万元…
+
+块3  ## 二、 行政事业性国有资产管理不够严格高效
+     （一）资产基础性管理薄弱。主要表现为15个部门的资产底数不清、闲置…
+```
+
+⇒ **`##` 标题层级正确、段落完整、金额与数字全对**，且**页码已剔除**。
+对比同一份文档走 `builtin + 多模态`（老魏实测的碎片化输出），段落完整性明显更好。
+
+#### ⑤ 一个能力分层的观察（未做结论）
+
+WeKnora 的**知识库级**引擎选择只到「**按文件类型**」这一层
+（`parser_engine_rules: [{file_types, engine}]`），**没有「按文档性质分流」的表达能力**。
+⇒ 若要「表格密集的库走 A、纯文字批量的库走 B」，只能**按库分开建**（本验证即此法）。
+
+#### ⑥ 测试残留已清理
+
+| 项 | 处置 |
+|---|---|
+| 临时知识库 `wkj-ppsv3-验证` | 已删除（`DELETE /knowledge-bases/:id`） |
+| 测试文档 + 8 个分块 | 已软删（`deleted_at` 均已写入） |
+| 临时 API Key `wkj-tmp-verify` | 已从 `tenant_api_keys` 删除（该表只剩 `ADMIN`） |
+| 临时文件 | 已清理 |
+| **`paddleocr_vl_endpoint` 配置** | **保留** —— 它是使用该引擎的前提，且不影响未选用它的知识库 |
+
+现有 4 个业务库**未被触碰**（`pdf` 仍为 `anydoc`）。
+
+### 6.6 下一步
+
+若要正式启用：在目标知识库的「解析设置」里把 `pdf` 引擎选为 **PaddleOCR-VL（自建）**；
+存量文档走 `POST /knowledge/:id/reparse`。分块参数（`chunk_size` / 父子分块等）可按库调。
