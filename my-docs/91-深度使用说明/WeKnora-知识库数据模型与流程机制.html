@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WeKnora 知识库数据模型与流程机制</title>
+<style>
+:root{
+  --ink:#1f1f1d; --sub:#5f5e5a; --hint:#888780;
+  --bg:#faf9f6; --card:#ffffff; --line:#e6e4dc; --line2:#d3d1c7;
+  --blue:#185fa5; --blue-bg:#e6f1fb; --blue-line:#378add;
+  --green:#3b6d11; --green-bg:#eaf3de; --green-line:#639922;
+  --amber:#854f0b; --amber-bg:#faeeda; --amber-line:#ba7517;
+  --red:#a32d2d; --red-bg:#fcebeb; --red-line:#e24b4a;
+  --purple:#534ab7; --purple-bg:#eeedfe; --purple-line:#7f77dd;
+  --teal:#0f6e56; --teal-bg:#e1f5ee; --teal-line:#1d9e75;
+  --gray-bg:#f1efe8; --gray-line:#888780;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+  font-size:15px; line-height:1.75;
+}
+.wrap{max-width:900px; margin:0 auto; padding:40px 24px 80px}
+h1{font-size:27px; font-weight:600; margin:0 0 8px; letter-spacing:-.3px}
+h2{font-size:20px; font-weight:600; margin:52px 0 16px; padding-top:22px; border-top:1px solid var(--line); letter-spacing:-.2px}
+h2 .num{color:var(--blue); margin-right:10px; font-variant-numeric:tabular-nums}
+h3{font-size:16px; font-weight:600; margin:28px 0 10px}
+h4{font-size:14px; font-weight:600; margin:20px 0 8px; color:var(--sub)}
+p{margin:0 0 12px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px;
+  background:var(--gray-bg); padding:1px 5px; border-radius:4px}
+.lead{font-size:16px; color:var(--sub); margin:0 0 20px}
+.sub{font-size:13px; color:var(--sub)}
+
+.statusbar{display:flex; flex-wrap:wrap; border:1px solid var(--line);
+  border-radius:10px; overflow:hidden; margin:20px 0 8px; background:var(--card)}
+.statusbar div{flex:1 1 150px; padding:12px 16px; border-right:1px solid var(--line)}
+.statusbar div:last-child{border-right:0}
+.statusbar .k{font-size:12px; color:var(--hint); display:block}
+.statusbar .v{font-size:14px; font-weight:600}
+
+.card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px 22px; margin:16px 0}
+.card.blue{background:var(--blue-bg); border-color:#c9dff5}
+.card.amber{background:var(--amber-bg); border-color:#f0dcb4}
+.card.red{background:var(--red-bg); border-color:#f5cfcf}
+.card.green{background:var(--green-bg); border-color:#cfe3b8}
+
+table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14px;
+  background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden}
+th{background:var(--gray-bg); text-align:left; padding:10px 13px; font-weight:600; font-size:13px;
+  border-bottom:1px solid var(--line2); white-space:nowrap}
+td{padding:10px 13px; border-bottom:1px solid var(--line); vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.n{white-space:nowrap; font-weight:600}
+td.mono{font-family:ui-monospace,Menlo,monospace; font-size:12.5px}
+
+ul,ol{margin:0 0 12px; padding-left:22px}
+li{margin:5px 0}
+
+.tip{border-left:3px solid var(--blue-line); background:var(--blue-bg);
+  padding:12px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:14px}
+.tip b{color:var(--blue)}
+.warn{border-left:3px solid var(--red-line); background:var(--red-bg);
+  padding:12px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:14px}
+.warn b{color:var(--red)}
+.ok{border-left:3px solid var(--green-line); background:var(--green-bg);
+  padding:12px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:14px}
+.ok b{color:var(--green)}
+.key{border-left:3px solid var(--purple-line); background:var(--purple-bg);
+  padding:12px 16px; border-radius:0 8px 8px 0; margin:14px 0; font-size:14px}
+.key b{color:var(--purple)}
+
+figure{margin:22px 0; background:var(--card); border:1px solid var(--line);
+  border-radius:12px; padding:18px 18px 12px}
+figure svg{width:100%; height:auto; display:block}
+figcaption{font-size:13px; color:var(--sub); margin-top:10px; text-align:center}
+
+.pill{display:inline-block; font-size:12px; padding:2px 9px; border-radius:20px;
+  border:1px solid var(--line2); background:var(--gray-bg); color:var(--sub); margin-right:6px}
+.pill.b{background:var(--blue-bg); border-color:#c9dff5; color:var(--blue)}
+.pill.g{background:var(--green-bg); border-color:#cfe3b8; color:var(--green)}
+.pill.a{background:var(--amber-bg); border-color:#f0dcb4; color:var(--amber)}
+.pill.p{background:var(--purple-bg); border-color:#cecbf6; color:var(--purple)}
+.pill.t{background:var(--teal-bg); border-color:#9fe1cb; color:var(--teal)}
+
+.toc{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 22px; margin:24px 0}
+.toc ol{columns:2; column-gap:32px; margin:0; padding-left:20px; font-size:14px}
+.toc li{margin:4px 0; break-inside:avoid}
+.toc a{text-decoration:none; color:var(--blue)}
+.toc a:hover{text-decoration:underline}
+
+footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font-size:13px; color:var(--hint)}
+@media(max-width:640px){
+  .toc ol{columns:1} .wrap{padding:24px 16px 60px}
+  .statusbar div{flex:1 1 100%; border-right:0; border-bottom:1px solid var(--line)}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>WeKnora 知识库数据模型与流程机制</h1>
+<p class="lead">一份文档从上传到能被检索到，中间发生了什么、数据存在哪里、有几种索引在同时工作——这份文档把这条链路拆开讲清楚。</p>
+
+<div class="statusbar">
+  <div><span class="k">关系库表</span><span class="v">73 张</span></div>
+  <div><span class="k">处理阶段</span><span class="v">5 个（含并行）</span></div>
+  <div><span class="k">索引流水线</span><span class="v">4 条可选</span></div>
+  <div><span class="k">检索召回来源</span><span class="v">9 种</span></div>
+</div>
+<p class="sub">依据：<code>internal/types/</code> 模型定义、<code>migrations/versioned/</code> 建表脚本、<code>internal/application/service/chat_pipeline/</code>。表数量由建表脚本机械统计得出。</p>
+
+<div class="toc">
+<ol>
+<li><a href="#s1">先建立全局印象：数据存在三个地方</a></li>
+<li><a href="#s2">四层数据模型：从容器到最小检索单元</a></li>
+<li><a href="#s3">文档的一生：5 个处理阶段</a></li>
+<li><a href="#s4">解析状态机：用户看到的进度条</a></li>
+<li><a href="#s5">分块（Chunk）：检索真正命中的东西</a></li>
+<li><a href="#s6">Wiki：文档的二次创作，以及那条证据链</a></li>
+<li><a href="#s7">知识图谱：唯一不在关系库里的数据</a></li>
+<li><a href="#s8">检索机制：9 路召回怎么合成一个答案</a></li>
+<li><a href="#s9">异步任务：11 个队列怎么排队</a></li>
+<li><a href="#s10">速查表与常见困惑</a></li>
+</ol>
+</div>
+
+<!-- ============ 1 ============ -->
+<h2 id="s1"><span class="num">1</span>先建立全局印象：数据存在三个地方</h2>
+
+<p>这是最容易被忽略、但最影响理解的一点：<b>WeKnora 的数据不是存在一个库里</b>。</p>
+
+<figure>
+<svg viewBox="0 0 680 230" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>三种存储的分工</title>
+<desc>PostgreSQL 存知识库、文档、分块、向量与 Wiki；Neo4j 存知识图谱；对象存储放原始文件。</desc>
+
+<rect x="40" y="46" width="375" height="150" rx="12" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="60" y="70" font-size="14" font-weight="600" fill="#042c53">PostgreSQL（关系库）</text>
+<text x="60" y="90" font-size="12" fill="#185fa5">绝大部分数据都在这里</text>
+
+<rect x="58" y="102" width="165" height="38" rx="7" fill="#ffffff" stroke="#378add" stroke-width="0.5"/>
+<text x="140" y="121" font-size="12.5" fill="#042c53" text-anchor="middle" dominant-baseline="central">知识库 · 文档 · 标签</text>
+
+<rect x="233" y="102" width="165" height="38" rx="7" fill="#ffffff" stroke="#378add" stroke-width="0.5"/>
+<text x="315" y="121" font-size="12.5" fill="#042c53" text-anchor="middle" dominant-baseline="central">分块与分块修订</text>
+
+<rect x="58" y="147" width="165" height="38" rx="7" fill="#ffffff" stroke="#378add" stroke-width="0.5"/>
+<text x="140" y="166" font-size="12.5" fill="#042c53" text-anchor="middle" dominant-baseline="central">向量 + BM25 索引</text>
+
+<rect x="233" y="147" width="165" height="38" rx="7" fill="#ffffff" stroke="#378add" stroke-width="0.5"/>
+<text x="315" y="166" font-size="12.5" fill="#042c53" text-anchor="middle" dominant-baseline="central">Wiki 页面与版本</text>
+
+<rect x="445" y="46" width="195" height="72" rx="12" fill="#eeedfe" stroke="#7f77dd" stroke-width="0.5"/>
+<text x="542" y="70" font-size="14" font-weight="600" fill="#26215c" text-anchor="middle">Neo4j（图数据库）</text>
+<text x="542" y="92" font-size="12" fill="#534ab7" text-anchor="middle">实体 · 关系（知识图谱）</text>
+<text x="542" y="108" font-size="11.5" fill="#7f77dd" text-anchor="middle">由 NEO4J_ENABLE 开关控制</text>
+
+<rect x="445" y="130" width="195" height="66" rx="12" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="542" y="153" font-size="14" font-weight="600" fill="#412402" text-anchor="middle">文件存储 / 对象存储</text>
+<text x="542" y="175" font-size="12" fill="#854f0b" text-anchor="middle">上传的原始文件</text>
+
+<text x="340" y="216" font-size="12.5" fill="#5f5e5a" text-anchor="middle">只有知识图谱走外部图数据库——这是理解「图谱为什么特殊」的起点</text>
+</svg>
+<figcaption>图 1 · 三种存储的分工。默认部署里向量和关键词索引也在 PostgreSQL 内（pgvector + ParadeDB）。</figcaption>
+</figure>
+
+<div class="key">
+<b>为什么不都用 PostgreSQL？</b>因为知识图谱要被反复「按关系跳转」——从实体 A 找它关联的实体 B，再找 B 关联的 C。这种多跳查询用 SQL 写会非常笨重，图数据库天生擅长。代价是它成了唯一需要额外运维的存储。
+</div>
+
+<table>
+<tr><th style="width:24%">存储</th><th style="width:30%">放什么</th><th>为什么放这</th></tr>
+<tr><td class="n">PostgreSQL</td><td>知识库、文档、分块、标签、Wiki、向量、队列状态</td><td>有事务、有外键、扩展够用（pgvector 存向量，ParadeDB 做 BM25）</td></tr>
+<tr><td class="n">Neo4j</td><td>实体、关系</td><td>多跳关系查询是它的主场</td></tr>
+<tr><td class="n">文件存储</td><td>原始文件</td><td>大二进制不该进数据库</td></tr>
+</table>
+
+<div class="tip">
+<b>ⓘ 向量库可以换</b>：除了默认的 PostgreSQL，向量索引还支持 Elasticsearch、Qdrant、Milvus、Weaviate、SQLite 六种引擎，按知识库粒度绑定（<code>vector_stores</code> 表）。换引擎不影响文档与分块模型——那是两件事。
+</div>
+
+<!-- ============ 2 ============ -->
+<h2 id="s2"><span class="num">2</span>四层数据模型：从容器到最小检索单元</h2>
+
+<p>抛开存储不谈，逻辑上就四层，一层套一层：</p>
+
+<figure>
+<svg viewBox="0 0 680 320" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>四层数据模型</title>
+<desc>知识库容纳文档，文档切成有序分块，分块派生出向量、图谱实体关系与 Wiki 页面三种产物。</desc>
+<defs>
+<marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="40" y="20" width="600" height="62" rx="10" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="60" y="42" font-size="14" font-weight="600" fill="#042c53">知识库 KnowledgeBase</text>
+<text x="60" y="63" font-size="12" fill="#185fa5">容器 + 策略：四个索引开关、绑定的模型、分块参数</text>
+<text x="622" y="50" font-size="12" fill="#185fa5" text-anchor="end">1 个库</text>
+
+<path d="M340 82V104" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a1)"/>
+<text x="350" y="97" font-size="11.5" fill="#5f5e5a">包含多份</text>
+
+<rect x="40" y="108" width="600" height="62" rx="10" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="60" y="130" font-size="14" font-weight="600" fill="#173404">文档 Knowledge</text>
+<text x="60" y="151" font-size="12" fill="#3b6d11">一份上传的文件 / 一个 URL / 一段手工内容，有解析状态</text>
+<text x="622" y="138" font-size="12" fill="#3b6d11" text-anchor="end">N 份</text>
+
+<path d="M340 170V192" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a1)"/>
+<text x="350" y="185" font-size="11.5" fill="#5f5e5a">切分成</text>
+
+<rect x="40" y="196" width="600" height="62" rx="10" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="60" y="218" font-size="14" font-weight="600" fill="#412402">分块 Chunk</text>
+<text x="60" y="239" font-size="12" fill="#854f0b">检索真正命中的最小单元，带序号与前后的链接</text>
+<text x="622" y="226" font-size="12" fill="#854f0b" text-anchor="end">N×M 块</text>
+
+<path d="M340 258V280" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a1)"/>
+<text x="350" y="273" font-size="11.5" fill="#5f5e5a">派生出</text>
+
+<rect x="40" y="284" width="185" height="30" rx="7" fill="#eeedfe" stroke="#7f77dd" stroke-width="0.5"/>
+<text x="132" y="299" font-size="12.5" fill="#26215c" text-anchor="middle" dominant-baseline="central">向量 / 关键词索引</text>
+<rect x="248" y="284" width="185" height="30" rx="7" fill="#eeedfe" stroke="#7f77dd" stroke-width="0.5"/>
+<text x="340" y="299" font-size="12.5" fill="#26215c" text-anchor="middle" dominant-baseline="central">实体与关系（图谱）</text>
+<rect x="455" y="284" width="185" height="30" rx="7" fill="#eeedfe" stroke="#7f77dd" stroke-width="0.5"/>
+<text x="547" y="299" font-size="12.5" fill="#26215c" text-anchor="middle" dominant-baseline="central">Wiki 页面</text>
+</svg>
+<figcaption>图 2 · 四层数据模型。前两层是「原料」，第三层是「检索单元」，第四层是三种索引产物。</figcaption>
+</figure>
+
+<h3>第一层：知识库（KnowledgeBase）——决定「怎么加工」</h3>
+<p>它不只是个文件夹，真正的价值在配置。最关键的是<b>四个索引开关</b>：</p>
+
+<table>
+<tr><th style="width:22%">开关</th><th style="width:26%">开启后产生什么</th><th>默认</th></tr>
+<tr><td class="n">vector_enabled</td><td>向量索引，支持「意思相近」的语义检索</td><td><span class="pill g">开</span></td></tr>
+<tr><td class="n">keyword_enabled</td><td>BM25 关键词索引，支持精确词命中</td><td><span class="pill g">开</span></td></tr>
+<tr><td class="n">wiki_enabled</td><td>从文档自动生成 Wiki 页面</td><td><span class="pill">关</span></td></tr>
+<tr><td class="n">graph_enabled</td><td>抽取实体与关系，建知识图谱</td><td><span class="pill">关</span></td></tr>
+</table>
+
+<div class="key">
+<b>这是整份文档最重要的一张表。</b>它解释了为什么同一个知识库，有人检索很准、有人什么都搜不到——四个开关决定了几条索引流水线跑不跑。默认只开向量和关键词，<b>Wiki 和图谱是要主动开的</b>。
+</div>
+
+<p>除开关外，知识库还记录了：分块配置、图片处理配置、以及绑定的各类模型（向量 / 摘要 / VLM / ASR / Wiki 合成）。这些配置在<b>创建文档时被读取一次</b>，之后改知识库配置不会自动重跑已有文档。</p>
+
+<h3>第二层：文档（Knowledge）——「原料」</h3>
+<table>
+<tr><th style="width:26%">字段组</th><th>含义</th></tr>
+<tr><td class="n">身份</td><td><code>id</code> / <code>title</code> / <code>type</code> / <code>knowledge_base_id</code></td></tr>
+<tr><td class="n">来源</td><td><code>source</code>（URL 或 manual）、<code>channel</code>（从哪个入口进来）</td></tr>
+<tr><td class="n">状态</td><td><code>parse_status</code>、<code>summary_status</code>、<code>pending_subtasks_count</code></td></tr>
+<tr><td class="n">文件</td><td><code>file_name</code> / <code>file_type</code> / <code>file_hash</code> / <code>file_path</code> / <code>storage_size</code></td></tr>
+<tr><td class="n">目录</td><td><code>folder_path</code>——只影响展示与导航，<b>不决定文件实际存哪</b></td></tr>
+<tr><td class="n">两类元数据</td><td><code>metadata</code>（系统写入的摄取状态）vs <code>custom_metadata</code>（用户自己写的）</td></tr>
+</table>
+
+<div class="tip">
+<b>ⓘ <code>channel</code> 记录了文档从哪来</b>：网页上传、API、微信、<b>浏览器扩展</b>等。这解释了为什么浏览器里抓到的内容能直接进知识库——它在入库时被打上了对应的来源标记。
+</div>
+
+<h3>第三层：分块（Chunk）——下面第 5 章单独讲</h3>
+<p>它是检索的最小单元，字段最密，值得单独一节。</p>
+
+<h3>第四层：三种派生物</h3>
+<p>向量索引、图谱、Wiki 都是<b>从分块派生出来的</b>，有各自的存储和生命周期：</p>
+<table>
+<tr><th style="width:18%">产物</th><th style="width:26%">从哪来</th><th>存在哪</th></tr>
+<tr><td class="n">向量 / 关键词</td><td>分块的文本内容</td><td>PostgreSQL 的 <code>embeddings</code> 表</td></tr>
+<tr><td class="n">实体与关系</td><td>分块内容经模型抽取</td><td>Neo4j</td></tr>
+<tr><td class="n">Wiki 页面</td><td>多份文档跨文档合成</td><td>PostgreSQL 的 <code>wiki_pages</code></td></tr>
+</table>
+
+<!-- ============ 3 ============ -->
+<h2 id="s3"><span class="num">3</span>文档的一生：5 个处理阶段</h2>
+
+<p>一份文档上传后，会经过五个有名字、有先后依赖的阶段。这不是我的归纳——代码里定义了一张明确的依赖表。</p>
+
+<figure>
+<svg viewBox="0 0 680 190" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>五个处理阶段及其依赖关系</title>
+<desc>文档解析后进入分块，分块之后向量化与多模态并行执行，两者都完成后进入后处理。</desc>
+<defs>
+<marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="35" y="70" width="115" height="48" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="92" y="88" font-size="13" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">1 文档解析</text>
+<text x="92" y="106" font-size="11" fill="#185fa5" text-anchor="middle" dominant-baseline="central">docreader</text>
+
+<rect x="180" y="70" width="115" height="48" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="237" y="88" font-size="13" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">2 分块</text>
+<text x="237" y="106" font-size="11" fill="#185fa5" text-anchor="middle" dominant-baseline="central">chunking</text>
+
+<rect x="330" y="25" width="130" height="44" rx="8" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="395" y="40" font-size="13" font-weight="600" fill="#173404" text-anchor="middle" dominant-baseline="central">3 向量化</text>
+<text x="395" y="57" font-size="11" fill="#3b6d11" text-anchor="middle" dominant-baseline="central">embedding</text>
+
+<rect x="330" y="100" width="130" height="44" rx="8" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="395" y="115" font-size="13" font-weight="600" fill="#173404" text-anchor="middle" dominant-baseline="central">4 多模态</text>
+<text x="395" y="132" font-size="11" fill="#3b6d11" text-anchor="middle" dominant-baseline="central">multimodal</text>
+
+<rect x="500" y="70" width="130" height="48" rx="8" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="565" y="88" font-size="13" font-weight="600" fill="#412402" text-anchor="middle" dominant-baseline="central">5 后处理</text>
+<text x="565" y="106" font-size="11" fill="#854f0b" text-anchor="middle" dominant-baseline="central">postprocess</text>
+
+<path d="M150 94H175" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a2)"/>
+<path d="M295 94H315V47H325" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a2)"/>
+<path d="M295 94H315V122H325" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a2)"/>
+<path d="M460 47H480V94H495" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a2)"/>
+<path d="M460 122H480V94H495" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a2)"/>
+
+<text x="340" y="166" font-size="12" fill="#5f5e5a" text-anchor="middle">第 3 与第 4 阶段并行，互不依赖；第 5 阶段要等两者都结束</text>
+</svg>
+<figcaption>图 3 · 五阶段依赖 DAG。源码：<code>internal/types/knowledge_span.go:70-76</code>。</figcaption>
+</figure>
+
+<table>
+<tr><th style="width:16%">阶段</th><th style="width:22%">做什么</th><th>失败会怎样</th></tr>
+<tr><td class="n">1 文档解析</td><td>把 PDF / Word / 图片等转成文本</td><td>整条链断掉，文档标记为失败</td></tr>
+<tr><td class="n">2 分块</td><td>把长文本切成一段段</td><td>后续三个阶段全部变成「取消」</td></tr>
+<tr><td class="n">3 向量化</td><td>把每块转成向量，写进索引</td><td>该文档检索不到，但其他阶段可继续</td></tr>
+<tr><td class="n">4 多模态</td><td>图片 OCR、图注生成</td><td>仅影响图片内容，纯文本不受影响</td></tr>
+<tr><td class="n">5 后处理</td><td>统一调度收尾：摘要、问题生成、图谱抽取、Wiki 生成等</td><td>主体内容已可用，富化内容缺失</td></tr>
+</table>
+
+<div class="key">
+<b>「取消」和「失败」是两个不同状态</b>：某个阶段自己出错叫 <b>failed</b>；因为上游阶段失败而根本没轮到它跑，叫 <b>cancelled</b>。界面上这两种会分开显示——「你坏了导致我没跑」和「我自己坏了」是两回事。
+</div>
+
+<div class="tip">
+<b>ⓘ 第 5 阶段是「收尾总调度」</b>：摘要生成、问题生成、图谱抽取、自动打标签、知识库画像等都挂在它下面。所以文档显示「已完成」但摘要还没出来，通常不是出错，而是这些富化子任务还在排队（此时状态是 <code>finalizing</code>）。
+</div>
+
+<!-- ============ 4 ============ -->
+<h2 id="s4"><span class="num">4</span>解析状态机：用户看到的进度条</h2>
+
+<figure>
+<svg viewBox="0 0 680 210" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>文档解析状态机</title>
+<desc>待处理到处理中，再到收尾中，最后完成；处理中或收尾中都可能失败；删除时进入删除中状态。</desc>
+<defs>
+<marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="40" y="60" width="110" height="46" rx="8" fill="#f1efe8" stroke="#888780" stroke-width="0.5"/>
+<text x="95" y="76" font-size="13" font-weight="600" fill="#2c2c2a" text-anchor="middle" dominant-baseline="central">待处理</text>
+<text x="95" y="93" font-size="10.5" fill="#5f5e5a" text-anchor="middle" dominant-baseline="central">pending</text>
+
+<rect x="180" y="60" width="115" height="46" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="237" y="76" font-size="13" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">处理中</text>
+<text x="237" y="93" font-size="10.5" fill="#185fa5" text-anchor="middle" dominant-baseline="central">processing</text>
+
+<rect x="325" y="60" width="115" height="46" rx="8" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="382" y="76" font-size="13" font-weight="600" fill="#412402" text-anchor="middle" dominant-baseline="central">收尾中</text>
+<text x="382" y="93" font-size="10.5" fill="#854f0b" text-anchor="middle" dominant-baseline="central">finalizing</text>
+
+<rect x="470" y="60" width="115" height="46" rx="8" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="527" y="76" font-size="13" font-weight="600" fill="#173404" text-anchor="middle" dominant-baseline="central">已完成</text>
+<text x="527" y="93" font-size="10.5" fill="#3b6d11" text-anchor="middle" dominant-baseline="central">completed</text>
+
+<rect x="237" y="145" width="115" height="46" rx="8" fill="#fcebeb" stroke="#e24b4a" stroke-width="0.5"/>
+<text x="294" y="161" font-size="13" font-weight="600" fill="#501313" text-anchor="middle" dominant-baseline="central">失败</text>
+<text x="294" y="178" font-size="10.5" fill="#a32d2d" text-anchor="middle" dominant-baseline="central">failed</text>
+
+<path d="M150 83H175" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a3)"/>
+<path d="M295 83H320" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a3)"/>
+<path d="M440 83H465" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a3)"/>
+<path d="M237 106V140" fill="none" stroke="#e24b4a" stroke-width="1.5" marker-end="url(#a3)"/>
+<path d="M382 106V125H300V140" fill="none" stroke="#e24b4a" stroke-width="1.5" marker-end="url(#a3)"/>
+
+<text x="600" y="83" font-size="11.5" fill="#5f5e5a" text-anchor="middle">删除时</text>
+<text x="600" y="100" font-size="11.5" fill="#5f5e5a" text-anchor="middle">→ deleting</text>
+</svg>
+<figcaption>图 4 · 解析状态机。「收尾中」是最容易被误判成卡住的状态。</figcaption>
+</figure>
+
+<table>
+<tr><th style="width:20%">状态</th><th style="width:26%">含义</th><th>你在界面上会看到</th></tr>
+<tr><td class="n">pending</td><td>已入库，还没开始处理</td><td>排队中</td></tr>
+<tr><td class="n">processing</td><td>主流程运行中</td><td>解析进度条</td></tr>
+<tr><td class="n">finalizing</td><td>正文已好，富化子任务在跑</td><td>看起来像「快好了但还没好」</td></tr>
+<tr><td class="n">completed</td><td>全部结束</td><td>可用</td></tr>
+<tr><td class="n">failed</td><td>出错</td><td>失败原因</td></tr>
+<tr><td class="n">deleting</td><td>正在删除（防止并发任务打架）</td><td>删除中</td></tr>
+</table>
+
+<div class="tip">
+<b>ⓘ <code>finalizing</code> 配了一个计数器</b>：<code>pending_subtasks_count</code> 记录还没完成的富化子任务数（摘要、问题、图谱分块）。它只在 finalizing 阶段有意义，进入终态后归零。
+</div>
+
+<!-- ============ 5 ============ -->
+<h2 id="s5"><span class="num">5</span>分块（Chunk）：检索真正命中的东西</h2>
+
+<p>你搜问题时，系统命中的不是「文档」，而是具体的某一段——那就是分块。它的字段设计里藏着不少机制。</p>
+
+<table>
+<tr><th style="width:26%">字段</th><th>作用</th></tr>
+<tr><td class="n">content</td><td>当前文本内容（可能被人工编辑过）</td></tr>
+<tr><td class="n">source_content</td><td><b>解析器产出的原始文本，不可变</b>。人工编辑时用来回滚与对照</td></tr>
+<tr><td class="n">content_revision</td><td>每次编辑或回滚加一</td></tr>
+<tr><td class="n">index_status</td><td>当前内容是否已同步进索引（ready / processing / failed）</td></tr>
+<tr><td class="n">chunk_index</td><td>在原文档中的顺序位置</td></tr>
+<tr><td class="n">start_at / end_at</td><td>在原文中的字符起止位置</td></tr>
+<tr><td class="n">pre_chunk_id / next_chunk_id</td><td>前后相邻块的链接</td></tr>
+<tr><td class="n">chunk_type</td><td>类型：正文 / 摘要 / 图片等</td></tr>
+<tr><td class="n">parent_chunk_id</td><td>指向父块（图片块挂在正文块下）</td></tr>
+<tr><td class="n">relation_chunks</td><td><b>图谱算出的直接关联块</b>（缓存）</td></tr>
+<tr><td class="n">indirect_relation_chunks</td><td><b>二度关联块</b>（缓存）</td></tr>
+<tr><td class="n">context_header</td><td>索引时拼在正文前的 Markdown 标题面包屑</td></tr>
+<tr><td class="n">is_enabled</td><td>可临时关掉某块，让它不被检索</td></tr>
+</table>
+
+<div class="key">
+<b>为什么要分 <code>content</code> 和 <code>source_content</code>？</b>因为分块允许人工编辑。编辑会污染原始解析结果，所以保留一份不可变的原始版本——既能回滚，也能在编辑后按同样的输入重建索引（<code>context_header</code> 也是为此持久化的）。
+</div>
+
+<div class="tip">
+<b>ⓘ 图谱的结果缓存在分块表里</b>：<code>relation_chunks</code> 和 <code>indirect_relation_chunks</code> 就是图谱算出的「这块跟哪些块有关系」的结果。为什么要缓存？因为图谱在 Neo4j，每次检索都去查图太慢——算一次存在这里，检索时直接读。
+</div>
+
+<h3>分块周围的表</h3>
+<table>
+<tr><th style="width:26%">表</th><th>存什么</th></tr>
+<tr><td class="n mono">chunks</td><td>分块本体</td></tr>
+<tr><td class="n mono">chunk_revisions</td><td>分块的历史修订</td></tr>
+<tr><td class="n mono">embeddings</td><td>向量与全文内容（向量检索与 BM25 共用）</td></tr>
+<tr><td class="n mono">knowledge_tags<br>knowledge_tag_relations</td><td>标签及其与文档的关联</td></tr>
+</table>
+
+<!-- ============ 6 ============ -->
+<h2 id="s6"><span class="num">6</span>Wiki：文档的二次创作，以及那条证据链</h2>
+
+<p>Wiki 不是文档的另一种存法，而是<b>跨文档综合出来的新内容</b>。一份文档可能贡献到多个 Wiki 页面，一个页面也可能由多份文档合成。</p>
+
+<p>它最值得理解的是<b>回指设计</b>——每个 Wiki 页面都能告诉你「我是从哪些文档、哪些分块变来的」。</p>
+
+<figure>
+<svg viewBox="0 0 680 200" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Wiki 页面的证据回指链</title>
+<desc>Wiki 页面通过 ChunkRefs 指向具体分块，通过 SourceRefs 指向来源文档；分块又归属于文档。</desc>
+<defs>
+<marker id="a4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="40" y="70" width="170" height="62" rx="9" fill="#eeedfe" stroke="#7f77dd" stroke-width="0.5"/>
+<text x="125" y="92" font-size="14" font-weight="600" fill="#26215c" text-anchor="middle" dominant-baseline="central">Wiki 页面</text>
+<text x="125" y="112" font-size="11.5" fill="#534ab7" text-anchor="middle" dominant-baseline="central">entity/acme-corp</text>
+
+<rect x="275" y="70" width="140" height="62" rx="9" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="345" y="92" font-size="14" font-weight="600" fill="#412402" text-anchor="middle" dominant-baseline="central">分块</text>
+<text x="345" y="112" font-size="11.5" fill="#854f0b" text-anchor="middle" dominant-baseline="central">一段具体原文</text>
+
+<rect x="480" y="70" width="140" height="62" rx="9" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="550" y="92" font-size="14" font-weight="600" fill="#173404" text-anchor="middle" dominant-baseline="central">文档</text>
+<text x="550" y="112" font-size="11.5" fill="#3b6d11" text-anchor="middle" dominant-baseline="central">一份完整文件</text>
+
+<path d="M210 101H270" fill="none" stroke="#7f77dd" stroke-width="1.5" marker-end="url(#a4)"/>
+<text x="240" y="91" font-size="11" fill="#534ab7" text-anchor="middle">ChunkRefs</text>
+
+<path d="M415 101H475" fill="none" stroke="#ba7517" stroke-width="1.5" marker-end="url(#a4)"/>
+<text x="445" y="91" font-size="11" fill="#854f0b" text-anchor="middle">归属</text>
+
+<path d="M125 70V45H550V65" fill="none" stroke="#7f77dd" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a4)"/>
+<text x="337" y="36" font-size="11.5" fill="#534ab7" text-anchor="middle">SourceRefs（文档级引用）</text>
+
+<text x="340" y="170" font-size="12" fill="#5f5e5a" text-anchor="middle">页面被重新生成时，整批引用会一起刷新；源文档删除时，可据此撤回引用</text>
+</svg>
+<figcaption>图 5 · Wiki 的证据回指链。摘要类页面只有 SourceRefs，实体/概念类页面还有 ChunkRefs。</figcaption>
+</figure>
+
+<h3>Wiki 页面的字段要点</h3>
+<table>
+<tr><th style="width:24%">字段</th><th>说明</th></tr>
+<tr><td class="n">slug</td><td>URL 友好标识，形如 <code>entity/acme-corp</code>，在库内唯一</td></tr>
+<tr><td class="n">page_type</td><td>页面类型：摘要 / 实体 / 概念 / 索引 / 综述 / 对比</td></tr>
+<tr><td class="n">status</td><td>草稿 / 已发布 / 已归档</td></tr>
+<tr><td class="n">content / summary</td><td>Markdown 正文与一行摘要</td></tr>
+<tr><td class="n">aliases</td><td>别名、缩写、译名——用于搜索时匹配同一事物的不同叫法</td></tr>
+<tr><td class="n">source_refs</td><td>来源文档（格式 <code>文档ID|标题</code>）</td></tr>
+<tr><td class="n">chunk_refs</td><td>来源分块的具体 ID</td></tr>
+<tr><td class="n">in_links / out_links</td><td>谁链到我 / 我链到谁（页面双链）</td></tr>
+<tr><td class="n">folder_id 等</td><td>目录树位置。真正的位置只由 <code>folder_id</code> 决定，其余是缓存副本</td></tr>
+<tr><td class="n">version</td><td>版本号。<b>只有内容真的变了才加一</b>，纯维护写入不动它</td></tr>
+<tr><td class="n">last_edit_source</td><td>这一版谁写的：流水线 / 智能体 / 用户 / 回滚</td></tr>
+</table>
+
+<div class="tip">
+<b>ⓘ Wiki 有五张表</b>：页面本身、页面修订历史、文件夹树、页面问题（issue）、操作日志。修订表每改一版存一份快照，可以回滚到任意历史版本。
+</div>
+
+<div class="key">
+<b>别把「Wiki 的链接图」当成「知识图谱」</b>。Wiki 也有 nodes/edges 结构，但它的节点是<b>页面</b>、边是<b>页面间的超链接</b>（<code>in_links</code>/<code>out_links</code>）。而知识图谱的节点是<b>实体</b>、边是<b>语义关系</b>，且存在完全不同的数据库里。两者名字都叫 graph，实质毫无关系。
+</div>
+
+<!-- ============ 7 ============ -->
+<h2 id="s7"><span class="num">7</span>知识图谱：唯一不在关系库里的数据</h2>
+
+<p>开启 <code>graph_enabled</code> 后，系统会让模型从分块里抽取实体和关系，存进 Neo4j。</p>
+
+<figure>
+<svg viewBox="0 0 680 240" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>知识图谱的数据结构</title>
+<desc>两个实体之间通过有强度值的关系连接，每个实体和关系都记录它出现在哪些分块里，可回指原文。</desc>
+<defs>
+<marker id="a5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="60" y="30" width="180" height="64" rx="9" fill="#e1f5ee" stroke="#1d9e75" stroke-width="0.5"/>
+<text x="150" y="52" font-size="13.5" font-weight="600" fill="#04342c" text-anchor="middle" dominant-baseline="central">实体 A</text>
+<text x="150" y="72" font-size="11.5" fill="#0f6e56" text-anchor="middle" dominant-baseline="central">名称 · 类型 · 描述</text>
+
+<rect x="440" y="30" width="180" height="64" rx="9" fill="#e1f5ee" stroke="#1d9e75" stroke-width="0.5"/>
+<text x="530" y="52" font-size="13.5" font-weight="600" fill="#04342c" text-anchor="middle" dominant-baseline="central">实体 B</text>
+<text x="530" y="72" font-size="11.5" fill="#0f6e56" text-anchor="middle" dominant-baseline="central">名称 · 类型 · 描述</text>
+
+<path d="M240 62H435" fill="none" stroke="#1d9e75" stroke-width="1.8" marker-end="url(#a5)"/>
+<text x="337" y="52" font-size="12" font-weight="600" fill="#0f6e56" text-anchor="middle">关系（强度 1–10）</text>
+<text x="337" y="78" font-size="11" fill="#0f6e56" text-anchor="middle">关系的描述文本</text>
+
+<rect x="250" y="160" width="180" height="52" rx="9" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="340" y="178" font-size="13" font-weight="600" fill="#412402" text-anchor="middle" dominant-baseline="central">来源分块</text>
+<text x="340" y="196" font-size="11.5" fill="#854f0b" text-anchor="middle" dominant-baseline="central">证据出自哪段原文</text>
+
+<path d="M150 94V140H245" fill="none" stroke="#1d9e75" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#a5)"/>
+<path d="M530 94V140H435" fill="none" stroke="#1d9e75" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#a5)"/>
+<text x="215" y="132" font-size="11" fill="#0f6e56" text-anchor="middle">ChunkIDs</text>
+<text x="468" y="132" font-size="11" fill="#0f6e56" text-anchor="middle">ChunkIDs</text>
+</svg>
+<figcaption>图 6 · 图谱的数据结构。实体和关系都带「我出自哪些分块」，所以图谱结论可以回溯到原文。</figcaption>
+</figure>
+
+<table>
+<tr><th style="width:20%">对象</th><th>字段</th></tr>
+<tr><td class="n">实体 Entity</td><td>ID、标题、类型、描述、<b>出现的分块列表</b>、出现频次、连接度</td></tr>
+<tr><td class="n">关系 Relationship</td><td>起点、终点、描述、<b>强度（1–10）</b>、权重、<b>出现的分块列表</b>、两端连接度之和</td></tr>
+</table>
+
+<h3>图谱在检索里怎么用</h3>
+<p>它不直接给你答案，而是<b>扩充上下文</b>：</p>
+<ul>
+<li><b>直接关联块</b>（<code>GetRelationChunks</code>）：跟命中块有直接关系的其他块，一并取来</li>
+<li><b>二度关联块</b>（<code>GetIndirectRelationChunks</code>）：通过中间实体间接连上的块，用于再扩散一层</li>
+</ul>
+<p>结果就缓存在前面提到的分块表 <code>relation_chunks</code> / <code>indirect_relation_chunks</code> 字段里。</p>
+
+<div class="warn">
+<b>图谱是可选增强，不是必需</b>。它依赖外部图数据库、抽取要调模型（慢且花钱），所以默认关闭。不开图谱时，其他三种索引完全正常工作。
+</div>
+
+<!-- ============ 8 ============ -->
+<h2 id="s8"><span class="num">8</span>检索机制：9 路召回怎么合成一个答案</h2>
+
+<p>提问时，系统并不是「搜一次、取前几条」，而是<b>多路并行召回、再层层收敛</b>。</p>
+
+<figure>
+<svg viewBox="0 0 680 220" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>检索的多路召回与收敛</title>
+<desc>一个查询同时走向量、关键词、实体关系、Wiki 四路召回，汇合后经过滤、重排、合并，最后交给模型生成回答。</desc>
+<defs>
+<marker id="a6" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="30" y="88" width="100" height="48" rx="8" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="80" y="106" font-size="13" font-weight="600" fill="#042c53" text-anchor="middle" dominant-baseline="central">你的问题</text>
+<text x="80" y="123" font-size="11" fill="#185fa5" text-anchor="middle" dominant-baseline="central">先被改写</text>
+
+<rect x="175" y="18" width="160" height="34" rx="7" fill="#ffffff" stroke="#378add" stroke-width="0.5"/>
+<text x="255" y="35" font-size="12.5" fill="#042c53" text-anchor="middle" dominant-baseline="central">向量召回（语义相近）</text>
+
+<rect x="175" y="60" width="160" height="34" rx="7" fill="#ffffff" stroke="#378add" stroke-width="0.5"/>
+<text x="255" y="77" font-size="12.5" fill="#042c53" text-anchor="middle" dominant-baseline="central">关键词召回（BM25）</text>
+
+<rect x="175" y="102" width="160" height="34" rx="7" fill="#ffffff" stroke="#378add" stroke-width="0.5"/>
+<text x="255" y="119" font-size="12.5" fill="#042c53" text-anchor="middle" dominant-baseline="central">相邻块 / 父块 / 关系块</text>
+
+<rect x="175" y="144" width="160" height="34" rx="7" fill="#ffffff" stroke="#378add" stroke-width="0.5"/>
+<text x="255" y="161" font-size="12.5" fill="#042c53" text-anchor="middle" dominant-baseline="central">Wiki 页面加权</text>
+
+<path d="M130 112H155" fill="none" stroke="#888780" stroke-width="1.5"/>
+<path d="M155 35V161" fill="none" stroke="#888780" stroke-width="1.5"/>
+<path d="M155 35H172" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a6)"/>
+<path d="M155 77H172" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a6)"/>
+<path d="M155 119H172" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a6)"/>
+<path d="M155 161H172" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a6)"/>
+
+<path d="M335 35H355" fill="none" stroke="#888780" stroke-width="1.3"/>
+<path d="M335 77H355" fill="none" stroke="#888780" stroke-width="1.3"/>
+<path d="M335 119H355" fill="none" stroke="#888780" stroke-width="1.3"/>
+<path d="M335 161H355" fill="none" stroke="#888780" stroke-width="1.3"/>
+<path d="M355 35V161" fill="none" stroke="#888780" stroke-width="1.5"/>
+<path d="M355 98H375" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a6)"/>
+
+<rect x="380" y="72" width="120" height="52" rx="8" fill="#faeeda" stroke="#ba7517" stroke-width="0.5"/>
+<text x="440" y="90" font-size="13" font-weight="600" fill="#412402" text-anchor="middle" dominant-baseline="central">过滤 + 重排</text>
+<text x="440" y="108" font-size="11" fill="#854f0b" text-anchor="middle" dominant-baseline="central">按相关性排序</text>
+
+<path d="M500 98H525" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#a6)"/>
+
+<rect x="530" y="72" width="115" height="52" rx="8" fill="#eaf3de" stroke="#639922" stroke-width="0.5"/>
+<text x="587" y="90" font-size="13" font-weight="600" fill="#173404" text-anchor="middle" dominant-baseline="central">生成回答</text>
+<text x="587" y="108" font-size="11" fill="#3b6d11" text-anchor="middle" dominant-baseline="central">带引用出处</text>
+
+<text x="340" y="200" font-size="12" fill="#5f5e5a" text-anchor="middle">任意一路失败不影响其他路——所以「换个问法就搜到了」很常见</text>
+</svg>
+<figcaption>图 7 · 检索的多路召回。四路并行取证据，汇合后统一过滤与重排。</figcaption>
+</figure>
+
+<p>代码里定义了 9 种具体的召回来源，每一路取回的证据都带「我是怎么被找到的」标记：</p>
+
+<table>
+<tr><th style="width:26%">召回方式</th><th>找什么</th></tr>
+<tr><td class="n">向量匹配</td><td>意思相近的分块</td></tr>
+<tr><td class="n">关键词匹配</td><td>精确词命中的分块（BM25）</td></tr>
+<tr><td class="n">相邻块匹配</td><td>命中块的上下文前后段</td></tr>
+<tr><td class="n">父块匹配</td><td>命中块的父块</td></tr>
+<tr><td class="n">关系块匹配</td><td>图谱算出的直接关联块</td></tr>
+<tr><td class="n">图谱匹配</td><td>沿实体关系跳转到的新分块</td></tr>
+<tr><td class="n">历史匹配</td><td>本会话历史里出现过的内容</td></tr>
+<tr><td class="n">网络搜索</td><td>外部网页（需先配搜索服务）</td></tr>
+<tr><td class="n">数据分析</td><td>从表格类数据里算出结果</td></tr>
+</table>
+
+<div class="key">
+<b>「为什么换个问法就搜到了」有了答案</b>：四路召回各有各的盲区。向量适合意思相近但用词不同，关键词适合精确术语；某一问法下某一路召回为空，换个说法可能就命中了。这不是系统不稳定，是设计使然。
+</div>
+
+<div class="tip">
+<b>ⓘ 查询理解与改写</b>：问题进来后会先被理解和扩展（<code>query_understand</code> / <code>query_expansion</code>），再分发给各路召回。所以「同一个问题，模型看到的查询词可能不止一个」。
+</div>
+
+<!-- ============ 9 ============ -->
+<h2 id="s9"><span class="num">9</span>异步任务：11 个队列怎么排队</h2>
+
+<p>前面所有处理都是异步的——上传接口立即返回，实际工作在后台队列里做。队列不是随便设的，它按<b>工作池</b>分组，不同池走不同并发资源。</p>
+
+<table>
+<tr><th style="width:22%">队列</th><th style="width:18%">工作池</th><th>跑什么任务</th></tr>
+<tr><td class="n mono">default</td><td>core</td><td>文档处理、手工知识更新</td></tr>
+<tr><td class="n mono">chat_attachment</td><td>core</td><td>对话里临时上传的附件解析</td></tr>
+<tr><td class="n mono">post_process</td><td>post_process</td><td>知识后处理总调度</td></tr>
+<tr><td class="n mono">summary</td><td>enrichment</td><td>摘要、表格摘要、自动打标、知识库画像</td></tr>
+<tr><td class="n mono">multimodal</td><td>enrichment</td><td>图片 OCR 与图注</td></tr>
+<tr><td class="n mono">graph</td><td>enrichment</td><td>图谱抽取</td></tr>
+<tr><td class="n mono">question</td><td>enrichment</td><td>问题生成</td></tr>
+<tr><td class="n mono">memory</td><td>enrichment</td><td>记忆抽取</td></tr>
+<tr><td class="n mono">sync</td><td>maintenance</td><td>数据源同步</td></tr>
+<tr><td class="n mono">maintenance</td><td>maintenance</td><td>FAQ 导入、克隆、删除、批量重解析、移动</td></tr>
+<tr><td class="n mono">wiki</td><td>wiki</td><td>Wiki 同步与收尾</td></tr>
+</table>
+
+<p>每个队列带<b>权重</b>，决定它在所属工作池里分到多少处理能力。比如 <code>chat_attachment</code> 权重高于 <code>default</code>——这样一次大批量知识库导入不会把聊天里上传的附件堵在后面。</p>
+
+<div class="key">
+<b>任务失败不会丢</b>：有 <code>task_dead_letters</code>（死信表）记录最终失败的任务，<code>task_pending_ops</code> 记录待执行的补充操作。排查「某个文档一直没处理完」时，这两个表是线索所在。
+</div>
+
+<div class="tip">
+<b>ⓘ 处理过程可观测</b>：每个文档的处理都会写一棵 span 树到 <code>knowledge_processing_spans</code>——哪个阶段、耗时多少、输入输出是什么、错在哪。这就是「处理详情」时间线的数据来源。
+</div>
+
+<!-- ============ 10 ============ -->
+<h2 id="s10"><span class="num">10</span>速查表与常见困惑</h2>
+
+<h3>核心表速查</h3>
+<table>
+<tr><th style="width:30%">表</th><th style="width:22%">属于</th><th>说明</th></tr>
+<tr><td class="n mono">knowledge_bases</td><td>知识库</td><td>容器与四个索引开关</td></tr>
+<tr><td class="n mono">knowledges</td><td>文档</td><td>一份文件 / URL / 手工内容</td></tr>
+<tr><td class="n mono">chunks</td><td>分块</td><td>检索命中的最小单元</td></tr>
+<tr><td class="n mono">chunk_revisions</td><td>分块</td><td>分块修改历史</td></tr>
+<tr><td class="n mono">embeddings</td><td>索引</td><td>向量 + 全文（向量检索与 BM25 共用）</td></tr>
+<tr><td class="n mono">knowledge_tags<br>knowledge_tag_relations</td><td>标签</td><td>标签定义与关联</td></tr>
+<tr><td class="n mono">wiki_pages</td><td>Wiki</td><td>页面本体，含回指引用</td></tr>
+<tr><td class="n mono">wiki_page_revisions</td><td>Wiki</td><td>版本快照</td></tr>
+<tr><td class="n mono">wiki_folders</td><td>Wiki</td><td>目录树</td></tr>
+<tr><td class="n mono">knowledge_processing_spans</td><td>可观测</td><td>五阶段处理追踪</td></tr>
+<tr><td class="n mono">task_dead_letters<br>task_pending_ops</td><td>队列</td><td>失败任务与待办操作</td></tr>
+<tr><td class="n mono">vector_stores<br>storage_backends</td><td>基础设施</td><td>向量引擎与存储后端绑定</td></tr>
+</table>
+<p class="sub">完整表清单共 73 张，覆盖身份权限、会话消息、智能体、MCP、记忆、数据源同步等领域，此处只列知识加工相关。</p>
+
+<h3>五个常见困惑</h3>
+
+<div class="card blue">
+<h4 style="margin-top:0">Q1：文档显示「已完成」，但摘要/图谱没有？</h4>
+<p style="margin-bottom:0">看 <code>finalizing</code> 与 <code>pending_subtasks_count</code>。富化任务是第 5 阶段下的子任务，排队慢于主流程是正常的。真正卡住时查 <code>task_dead_letters</code>。</p>
+</div>
+
+<div class="card blue">
+<h4 style="margin-top:0">Q2：为什么开了 Wiki 但没生成页面？</h4>
+<p style="margin-bottom:0">Wiki 是知识库级开关，且生成是有上限的（<code>max_pages_per_ingest</code>），并且要在文档处理流程里被触发。<b>配置改了不会自动重跑历史文档</b>，需要重新处理。</p>
+</div>
+
+<div class="card blue">
+<h4 style="margin-top:0">Q3：改了分块内容，检索结果会变吗？</h4>
+<p style="margin-bottom:0">会，但不是立即。编辑后 <code>index_status</code> 会变成处理中，需要重新索引。<code>source_content</code> 始终保留原始解析结果，可随时回滚。</p>
+</div>
+
+<div class="card blue">
+<h4 style="margin-top:0">Q4：知识图谱和 Wiki 的「图」是一回事吗？</h4>
+<p style="margin-bottom:0">不是。图谱的节点是<b>实体</b>、存 Neo4j；Wiki 的图节点是<b>页面</b>、数据就在关系库里。两者只是都叫 graph。</p>
+</div>
+
+<div class="card blue">
+<h4 style="margin-top:0">Q5：为什么同一份文档，别人搜得到我搜不到？</h4>
+<p style="margin-bottom:0">先确认三件事：知识库是否共享给你、分块是否被禁用（<code>is_enabled</code>）、检索走的是哪几路召回（四个索引开关）。多数「搜不到」出在权限或索引开关上。</p>
+</div>
+
+<footer>
+<p><b>依据来源</b>：<code>internal/types/knowledgebase.go</code>（知识库与索引策略）、
+<code>internal/types/knowledge.go</code>（文档与状态常量）、
+<code>internal/types/chunk.go</code>（分块）、
+<code>internal/types/wiki_page.go</code>（Wiki 页面与版本）、
+<code>internal/types/graph.go</code> 与 <code>extract_graph.go</code>（图谱实体与关系）、
+<code>internal/types/knowledge_span.go</code>（五阶段与依赖 DAG）、
+<code>internal/types/task.go</code>（队列拓扑与任务类型）、
+<code>internal/types/indexing_strategy.go</code>（四个索引开关）、
+<code>internal/types/embedding.go</code>（召回方式枚举）、
+<code>migrations/versioned/*.up.sql</code>（表结构，73 张由脚本统计）、
+<code>internal/application/service/chat_pipeline/</code>（检索流水线）。</p>
+</footer>
+
+</div>
+</body>
+</html>
