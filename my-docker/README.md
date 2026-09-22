@@ -19,6 +19,7 @@
 |---|---|---|
 | `postgres` · `redis` · `docreader` · `app` · `frontend` | 官方基底 | 本层只改各自的定制项（构建源、端口） |
 | **`searxng`** · `searxng-init` | 官方基底（**profile 门控**） | 自带网络搜索，经 `$DC` 的 `--profile searxng` 启用。**引擎清单由站点定制**：`my-docker/searxng/settings.yml`（国内网络只有 bing / 360search 可用，见 `my-docs/14-联网搜索/`） |
+| **`neo4j`** | 官方基底（**profile 门控**） | 知识图谱存储（实体 / 关系），经 `$DC` 的 `--profile neo4j` 启用。**容器起来 ≠ 功能开启**：真正的开关是 `.env` 的 `NEO4J_ENABLE`（部署脚本会在缺键时补 `true` 并生成随机密码）。数据落在命名卷 `neo4j-data` |
 | **`frontend-wkj`** | **本层新增** | 定制前端，源码 `my-frontend/` |
 | **`nginx`** | **本层新增** | 接入层：两个前端的 HTTPS/WSS 统一入口 |
 
@@ -45,6 +46,12 @@
 | 端口 | 指向 | 说明 |
 |---|---|---|
 | `41291` | `searxng`（自带搜索） | **已启用**（`deploy-wkj-dev.sh` 的 `$DC` 带 `--profile searxng`）。容器之间访问走容器网络 `http://searxng:8080`，与这个宿主端口无关（它只绑回环、仅用于宿主侧诊断） |
+| `41292` | `neo4j` Browser UI | **已启用**（`$DC` 带 `--profile neo4j`）。浏览器访问 `http://127.0.0.1:41292` 查看图谱数据（只能用 SSH 隧道，见下） |
+| `41293` | `neo4j` Bolt | 同上。供本机工具（cypher-shell / 桌面客户端）连 `bolt://127.0.0.1:41293`；app 走容器网络 `bolt://neo4j:7687`，**不经过端口** |
+
+> 两个 neo4j 端口都**只绑宿主回环**。要远程查看 Browser UI，用 SSH 隧道：
+> `ssh -L 41292:127.0.0.1:41292 <部署机> ` 后访问 `http://127.0.0.1:41292`。
+> 账号在 `.env` 的 `NEO4J_USERNAME` / `NEO4J_PASSWORD`（密码由部署脚本首次生成随机值）。
 
 ## 二、目录结构
 

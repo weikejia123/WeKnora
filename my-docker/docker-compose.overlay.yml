@@ -19,17 +19,24 @@
 #     · 序列字段（ports、volumes）默认**追加** ⇒ 若要替换必须用 `!override`
 #     · 标量字段（image、command）覆盖
 #
-# ★ 容器组清单（合并后，均为 wkj-dev 分支源码构建）
-#     postgres · redis · docreader · app · frontend   ← 官方基底定义（本文件只改各自的定制项）
-#     frontend-wkj                                    ← 本文件新增（定制前端，源码 my-frontend/）
-#     nginx                                           ← 本文件新增（接入层）
+# ★ 容器组清单（合并后）
+#     常驻（不带 profile 也启动）：
+#       postgres · redis · docreader · app · frontend   ← 官方基底定义（本文件只改各自的定制项）
+#       frontend-wkj                                    ← 本文件新增（定制前端，源码 my-frontend/）
+#       nginx                                           ← 本文件新增（接入层）
+#     按需（官方基底里 profile 门控，写进本文件也**不会**变成无条件启动）：
+#       searxng / searxng-init（自带搜索）
+#       neo4j（知识图谱存储）
+#       ⇒ 部署脚本已把这两个 profile 并入 $DC，故实际用法上「随容器组统一启停」。
 #
 # ★ 对外端口
 #     443    → nginx → 官方前端（便捷入口，免带端口）
 #     41200  → nginx → 官方前端
 #     41280  → nginx → 定制前端
 #     41201  → app（后端 API，仍是 http，未纳入 TLS）
-#     41291  → searxng（自带搜索；**仅绑回环**，且需 --profile searxng 才启动）
+#     41291  → searxng（自带搜索；**仅绑回环**，profile 门控）
+#     41292  → neo4j Browser UI（**仅绑回环**，profile 门控）
+#     41293  → neo4j Bolt（**仅绑回环**，profile 门控；供本机工具直连）
 #   两个前端容器本身**只绑宿主回环** 41211 / 41212（仅供诊断），对外一律经 nginx。
 #   ⇒ "没有 http 前端端口"是结构上的事实，不是约定。
 #
@@ -46,6 +53,10 @@
 #    10. +service frontend-wkj / +service nginx
 #    11. docreader.volumes         +./my-docreader:/app/docreader_ext:ro（PP-OCRv6 定制件）
 #    12. docreader.environment     +PYTHONPATH / PPOCR_BASE_URL / PPOCR_TIERS / PPOCR_FALLBACK
+#    13. searxng.ports             8080:8080 → 127.0.0.1:41291:8080（!override）+ SEARXNG_BASE_URL
+#    14. searxng-init.volumes      官方模板 → ./my-docker/searxng/settings.yml（!override）
+#    15. neo4j.ports               7474:7474 + 7687:7687 → 127.0.0.1:41292:7474
+#                                  + 127.0.0.1:41293:7687（!override）
 #   ⇒ 用 `./deploy/deploy-wkj-dev.sh compose-diff` 可随时复核（**仅覆盖 compose 层**）。
 #
 # ★ 官方**源码文件**的改动（compose-diff 看不到，须用 git 比对）：
@@ -286,3 +297,22 @@ services:
     volumes: !override
       - ./my-docker/searxng/settings.yml:/template/settings.yml:ro
       - searxng_config:/etc/searxng
+
+  # ───────────────────────── 知识图谱存储（官方已有的**可选**组件，非我们新增）
+  # 官方基底已定义 neo4j（镜像 / APOC 插件 / 命名卷 neo4j-data —— 卷已在基底
+  # volumes 段声明完毕，本文件无需重复声明）。本段**只做一件事**：把宿主端口挪进
+  # 我们的容器组号段（41200-41299），并统一只绑宿主回环（见 README 端口表）。
+  #
+  # ★ 本段**不声明 profiles** ⇒ 继承基底的 `[neo4j, full]`，即**仍需
+  #   `--profile neo4j` 才会启动** —— 写进本文件不等于无条件启动（与 searxng 同款门控）。
+  #   部署脚本已把该 profile 并入 $DC，故跟 searxng 一样随容器组统一启停。
+  # ★ 容器之间访问走容器网络 `bolt://neo4j:7687`（app 的 NEO4J_URI 默认值）
+  #   ⇒ 下面两个宿主端口**只服务宿主侧诊断**，与 app 的连接路径无关。
+  # ★ 必须用 `!override`：官方暴露 7474+7687 两个端口，而 ports 是序列字段（默认**追加**）
+  #   ⇒ 不用它就会同时留下官方的 7474/7687 两个全网段入口。
+  # ★ 图谱功能的**开关不在这里**，而是 .env 的 NEO4J_ENABLE（见 .env.example 的 J 段）。
+  #   容器起来 ≠ 功能开启：NEO4J_ENABLE 未设时 app 侧仍按关闭处理。
+  neo4j:
+    ports: !override
+      - "127.0.0.1:41292:7474"   # Browser UI（浏览器访问 http://127.0.0.1:41292）
+      - "127.0.0.1:41293:7687"   # Bolt（本机工具直连 bolt://127.0.0.1:41293）

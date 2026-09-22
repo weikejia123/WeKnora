@@ -72,12 +72,14 @@ readonly HEALTH_TIMEOUT=420                     # 健康检查最长等待（秒
 #   env_file 全部保持原语义，无需改任何相对路径。顺序也不能反。
 readonly COMPOSE_BASE_REL="docker-compose.yml"
 readonly COMPOSE_OVERLAY_REL="my-docker/docker-compose.overlay.yml"
-# ★ 必须带 --profile searxng，否则 compose **不会**创建/启动 searxng 与
-#   searxng-init —— 它们在官方基底里是 `profiles: [searxng, full]` 门控的。
+# ★ 必须带 --profile searxng 与 --profile neo4j，否则 compose **不会**创建/启动
+#   这两个组件 —— 它们在官方基底里分别是 `profiles: [searxng, full]` 与
+#   `profiles: [neo4j, full]` 门控的（我们的 overlay 刻意**不声明** profiles，
+#   正是为了继承这个门控：编排里写了它，也不等于无条件启动）。
 #   加在 $DC 这一处即可覆盖全部子命令（up / build / pull / down / restart / logs …）。
 #   注意：`$DC up -d <显式服务名>` 与 `$DC restart <服务>` 不受 profile 影响（显式指定即生效）；
-#   受影响的是**不带服务名**的 up / down / ps 之类 —— 它们从此把 searxng 一并纳入。
-readonly DC="docker compose --project-directory $REMOTE_DIR --env-file $REMOTE_DIR/.env --profile searxng -f $REMOTE_DIR/$COMPOSE_BASE_REL -f $REMOTE_DIR/$COMPOSE_OVERLAY_REL"
+#   受影响的是**不带服务名**的 up / down / ps 之类 —— 它们从此把这两个组件一并纳入。
+readonly DC="docker compose --project-directory $REMOTE_DIR --env-file $REMOTE_DIR/.env --profile searxng --profile neo4j -f $REMOTE_DIR/$COMPOSE_BASE_REL -f $REMOTE_DIR/$COMPOSE_OVERLAY_REL"
 
 # 颜色
 readonly C_OK=$'\033[0;32m'; readonly C_ERR=$'\033[0;31m'
@@ -482,6 +484,57 @@ else
   $DC pull --quiet
 fi
 
+# ── 知识图谱：容器组已含 neo4j，但「容器起来」≠「功能开启」──────────────
+# 功能开关是 .env 的 NEO4J_ENABLE（由 app 读取，见官方 compose 的 app.environment
+# 与 .env.example 的 J 段说明）。这里确保 .env 里图谱配置齐备。
+# ★ **缺键才补，已有键一律不覆盖** —— 与整个 .env 的纪律一致（内含生产密钥），
+#   因此本段幂等，且不会抹掉人工改成 false 的开关。
+# ★ 必须在**第一条 up 之前**：environment 变更要靠**重建**容器才生效，
+#   `docker compose restart` 不会重新加载 .env（已知坑，见 AGENTS.md 的数据安全段）。
+# ★ NEO4J_PASSWORD 必须在此刻定稿：官方默认是弱口令 password；且 Neo4j 把账号
+#   存在自己的数据卷里 —— 卷初始化之后再改 .env 里的密码**不会**同步过去，
+#   表现为 app 连不上（认证失败）。所以首次就写随机值。
+if ! grep -q '^NEO4J_ENABLE=' .env; then
+  printf 'NEO4J_ENABLE=true\n' >> .env
+  echo "  + .env 补上 NEO4J_ENABLE=true（此前未设置；容器组已含 neo4j）"
+fi
+if ! grep -q '^NEO4J_PASSWORD=' .env; then
+  _neo_pw=$(openssl rand -hex 16 2>/dev/null || od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
+  printf 'NEO4J_PASSWORD=%s\n' "$_neo_pw" >> .env
+  echo "  + .env 补上随机 NEO4J_PASSWORD（不用官方默认的弱口令 password）"
+fi
+
+# ── 知识图谱存储（neo4j）：**必须在 app 之前起** ──────────────────────
+# 与 searxng 同款：官方基底里是 `profiles: [neo4j, full]` 门控，靠 $DC 上的
+# `--profile neo4j` 才纳入本容器组；同样**必须显式点名**启动（不带服务名的 up
+# 不会创建 profile 门控服务）。
+# ★ **顺序是硬约束，不是偏好**：app 的 initNeo4jClient()
+#   （internal/container/container.go，函数体见"重试 30 次 × 2s"那段）
+#   在 NEO4J_ENABLE=true 时会 VerifyAuthentication，**重试 30 次 × 2 秒后仍失败
+#   即返回 error ⇒ app 启动失败**。所以 neo4j 必须先起来并监听 7687。
+# ★ 宿主端口 41292(Browser UI) / 41293(Bolt) **只绑回环**，仅用于宿主侧诊断；
+#   app 走容器网络 `bolt://neo4j:7687`，与本步无关（见 overlay 的 neo4j 段）。
+# ★ 数据落在命名卷 neo4j-data ⇒ `down`（不带 -v）不会伤数据。
+echo "  启动知识图谱存储（neo4j）..."
+$DC up -d neo4j
+
+# 等 neo4j 监听 7687。用 bash 内建 /dev/tcp 探测，不依赖镜像里是否有 curl/nc。
+# 首次初始化数据库通常 20-40s；app 侧重试窗口为 60s。
+_neo_ok=0
+for _i in $(seq 1 30); do
+  if docker exec WeKnora-neo4j bash -c 'exec 3<>/dev/tcp/127.0.0.1/7687' 2>/dev/null; then
+    _neo_ok=1
+    break
+  fi
+  sleep 2
+done
+if [ "$_neo_ok" = "1" ]; then
+  echo "  ✔ neo4j 已监听 7687"
+else
+  echo "  ⚠ neo4j 在 60s 内未监听 7687 —— app 侧仍会自行重试；若 app 起不来请查："
+  echo "      $DC logs --tail=50 neo4j"
+fi
+
 # ── 阶段一：基础设施 + 后端（不含 frontend）──────────────────────────
 # 为什么分两阶段：frontend 有 depends_on: app(healthy)。app 首次启动要在
 # 机械盘上建 70 张表，耗时可能超过 compose healthcheck 的
@@ -638,6 +691,29 @@ health_check() {
   else
     warn "searxng 未运行（状态 ${sx_state}）⇒ 网络搜索 Provider 不可用"
     log  "  启动：ssh $SSH_HOST 'cd $REMOTE_DIR && $DC up -d searxng'"
+  fi
+
+  # 知识图谱存储（neo4j）：同样是 profile 门控组件；且它是 app 的**前置依赖**
+  # （见 compose_up 段：initNeo4jClient 重试 30×2s，全失败即 app 起不来）。
+  local neo_state neo_bolt neo_flag
+  neo_state=$(ssh "$SSH_HOST" "docker inspect WeKnora-neo4j --format '{{.State.Status}}'" 2>/dev/null || echo "missing")
+  if [ "$neo_state" = "running" ]; then
+    # 判据取 **Bolt 7687 可连**（app 实际走的就是它），而不是 Browser UI 的 HTTP。
+    # 用 nginx 容器内的 busybox `nc` 探（alpine 自带；不必给 neo4j 镜像装工具）。
+    if ssh "$SSH_HOST" "docker exec weknora-nginx nc -z -w 5 neo4j 7687" >/dev/null 2>&1; then
+      # ★「容器在跑」≠「功能已开」：真正的开关是 .env 的 NEO4J_ENABLE（app 侧读取）。
+      neo_flag=$(ssh "$SSH_HOST" "grep -m1 '^NEO4J_ENABLE=' '$REMOTE_DIR/.env' 2>/dev/null | cut -d= -f2-" 2>/dev/null)
+      if [ "$neo_flag" = "true" ]; then
+        ok "知识图谱 neo4j → Bolt 7687 可连，且 NEO4J_ENABLE=true（功能已开启）"
+      else
+        warn "neo4j 在跑、7687 可连，但 .env 的 NEO4J_ENABLE=[${neo_flag:-未设置}] ⇒ 图谱功能仍关闭"
+      fi
+    else
+      warn "neo4j 在跑，但 Bolt 7687 从容器网络连不上（看日志：$DC logs neo4j）"
+    fi
+  else
+    warn "neo4j 未运行（状态 ${neo_state}）⇒ 知识图谱不可用"
+    log  "  启动：ssh $SSH_HOST 'cd $REMOTE_DIR && $DC up -d neo4j'"
   fi
 
   printf '\n'
