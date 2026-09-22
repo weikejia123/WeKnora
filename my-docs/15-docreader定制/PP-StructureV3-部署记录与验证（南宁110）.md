@@ -192,18 +192,47 @@ PP-StructureV3 面向「WeKnora 的文档解析后端」。混放会导致 pp-oc
 约 **10900 MiB** 推理 ⇒ **余量约 1.4 GB，再加载 VLM 将 OOM**。
 
 **★ 更新（2026-09-22 15:2x）：`pp-ocr-v6-gpu-api` 容器已删除**（老魏决定；镜像与模型缓存保留）
-⇒ 共卡项少一项。**实测当前状态**：
+⇒ 共卡项少一项。
+
+**★ 再次修正（16:2x 实测）：产线常驻会涨到峰值附近，不是固定 1744/2166**
+
+| 时点 | PP-StructureV3 的显存 |
+|---|---|
+| 刚起、未跑过大文档 | 2166 MiB |
+| **跑过 38 页整份之后（10 小时未重启）** | **4262 MiB** |
+
+**原因**：PaddlePaddle 分配器默认按需增长且**不归还驱动**（容器未设
+`FLAGS_allocator_strategy`）⇒ 跑过一次大文档后**显存池按峰值保留**。
+⇒ **余量要按「跑过之后」算**（我先前按启动值估，偏高估了余量）。
+
+**实测当前状态**（16:2x）：
 
 | 占用方 | 实测 |
 |---|---|
-| PP-StructureV3（常驻） | 2166 MiB |
-| Ollama `qwen3-embedding:4b` | 4304 MiB（★ 已按需自动重载，见 §6.1 第 1 条风险） |
+| PP-StructureV3（**跑过大文档后常驻**） | **4262 MiB** |
+| Ollama `qwen3-embedding:4b` | 4310 MiB（在 1h 驻留窗内） |
 | `llama-server` | 138 MiB |
-| **合计 / 空闲** | **6628 / 5283 MiB** |
+| **合计 / 空闲** | **8730 / 3181 MiB** |
 
-⇒ PP-StructureV3 推理峰值约 +2.3 GB ⇒ 峰值时余量约 **3.4 GB**，比原先宽裕。
+⇒ Ollama 释放后约 **4400 MiB / 空闲 ≈7.7 GiB**（原估 9.7 GiB，已修正）。
 恢复 36741 需 `docker compose -f compose.gpu.yaml up -d`（见
 `WeKnora-docreader接入PP-OCRv6方案.md` 头部的恢复命令）。
+
+**★ OCR 模型核对：服务实际用的是 PP-OCRv6（2026-09-22 16:2x 三重证据）**
+
+| # | 证据 | 内容 |
+|---|---|---|
+| 1 | 容器配置 | `PPSV3_OCR_DET_MODEL=PP-OCRv6_medium_det` / `PPSV3_OCR_REC_MODEL=PP-OCRv6_medium_rec` |
+| 2 | 运行时日志 | `Creating model: ('PP-OCRv6_medium_det')` / `('PP-OCRv6_medium_rec')` —— 全量各 **7 次** |
+| 3 | 反向核对 | 全量日志搜 `PP-OCRv5` ⇒ **命中 0** |
+
+> ⚠️ **v6 是「我们显式指定的」，不是产线默认**。权重缓存目录里
+> `PP-OCRv5_server_*` 与 `PP-OCRv6_medium_*` **并存** ——
+> v5 是**首次用默认值跑时**下载的（探针实测产线默认即 `PP-OCRv5_server`），
+> 指定后才缓存 v6。**两份权重不要误以为都是现役，只有 v6 在跑。**
+>
+> **可核对性缺口**：`GET /api/health` 只回显 6 个布尔开关、**不回显 OCR 模型名**
+> ⇒ 想确认"跑的是 v5 还是 v6"只能翻容器日志。建议在 health 里补两个字段（待定）。
 
 **★ 一处按实测修正的配置（WeKnora 侧需知悉）**
 
