@@ -388,7 +388,85 @@ for ipath, b64Str := range imagesB64 {
 
 现有 4 个业务库**未被触碰**（`pdf` 仍为 `anydoc`）。
 
-### 6.6 下一步
+### 6.6 ★ 混合 PDF 与跨页连续性：问题定义与已核实事实（方案待定）
+
+> 起因：老魏指出实际业务的 PDF 常是**混合形式**（既有文字层又有图片层），
+> 最简如「单页文字 + 单页图片」；并担心「先拆页 → 连续性变差」。
+> 下面三条是**实测定论的事实**，用于把讨论钉在地基上。
+
+#### 事实 ①：PP-StructureV3 **不读文本层** —— 混合 PDF 无需分流
+
+**证据（源码级）**：PaddleX 的 PDF 读取实现在
+`paddlex/inference/utils/io/readers.py`（容器内），全文搜
+`get_text | textpage | extract_text` ⇒ **命中数 = 0**；
+`PDFReader`（`:106-118`）只有 `read_file`/`load_file`，后端走 pypdfium2 **渲染**
+（`pdf_rendering.py:137` 的 `page.render(...).to_numpy()`）。
+
+⇒ **PP-StructureV3 对所有页一视同仁：渲染成位图 → 版面检测 → OCR。**
+它**不区分**本页有无文字层，也**不读文字层**。
+
+**含义**：
+
+| | 文字层页 | 图片层页 |
+|---|---|---|
+| WeKnora `builtin`（原生） | 抽文本层（100% 准确 / 毫秒级） | 渲染 → 交 Go 侧 VLM OCR |
+| **PP-StructureV3** | **渲染 + PP-OCRv6 OCR** | 渲染 + PP-OCRv6 OCR |
+
+⇒ 「单页文字 + 单页图片」这种混合，**在 PP-StructureV3 上不是问题** ——
+它天然处理，代价只是文字层页也走了 OCR（PP-OCRv6 实测均分 0.99+）。
+⇒ 换来的是**版面结构统一**（两页都有 `block_label` / 表格识别）。
+
+> 也就是说：**「按页分流」不是 PP-StructureV3 的路线，而是 WeKnora `builtin`
+> 的 `PDFParser` 已经在做的事**（逐页判断文本层，分别处理）。两条路是并行的两种选择。
+
+#### 事实 ②：跨页拼接发生在 **WeKnora 侧**，且改不了
+
+`paddleocr_vl_converter.go:211`：
+
+```go
+return strings.Join(texts, "\n\n"), images, nil
+```
+
+⇒ WeKnora 把每页 markdown 用 **`\n\n`（＝段落边界）** 拼接。
+下游 chunker 见到 `\n\n` 即认定段落边界 ⇒ **跨页断句会正好落在切分点上**。
+
+⚠️ 该文件是**官方文件**（AGENTS.md 第 1 条禁改）⇒
+**任何改善跨页连续性的改动都必须落在 110 服务侧，不能改这里。**
+
+#### 事实 ③：服务侧有充分的改造自由度
+
+WeKnora 的响应结构体（`paddleocr_vl_converter.go:129-140`）**只取**：
+
+```go
+LayoutParsingResults []struct {
+    Markdown struct {
+        Text   string            `json:"text"`
+        Images map[string]string `json:"images"`
+    } `json:"markdown"`
+}
+```
+
+**未使用** `isStart` / `isEnd` / 页序 等任何字段（已 grep 确认）。
+⇒ 服务侧可以自由调整**每页 markdown 的内容**（含把跨页片段重排到相邻页），
+WeKnora 侧无感。
+
+#### 由此得到的两个判断（供讨论）
+
+| 议题 | 现状 | 判断 |
+|---|---|---|
+| **跨页断句** | 一句话被 `\n\n` 切成两个 chunk | **可修**，且修法明确（服务侧「跨页归属重排」） |
+| **跨页表格** | 主表跨 35 页 ⇒ 35 个独立表格块，**每页各自带表头** | ★ **可能不该修** —— 见下 |
+
+★ **反直觉点（重要）**：重复表头对 **RAG 反而有利**。
+
+- **现状**（不合并）：每页一个表格块，**自带表头 + 该页的数据行** ⇒ 检索命中任一块都能看懂列含义
+- **若合并**成长表（WeKnora 请求里的 `mergeTables=true` 想做这件事，那是 PaddleOCR-VL 的能力）：
+  合并后的 35 页大表会被下游按长度切成很多块，**只有第一块带表头** ⇒ 后续块看不懂列含义
+
+⇒ 在**面向检索**的用途下，「分页表格 + 每页重复表头」可能优于「合并成长表」。
+**若目的是生成人能读的完整文档，则相反。**
+
+### 6.7 下一步
 
 若要正式启用：在目标知识库的「解析设置」里把 `pdf` 引擎选为 **PaddleOCR-VL（自建）**；
 存量文档走 `POST /knowledge/:id/reparse`。分块参数（`chunk_size` / 父子分块等）可按库调。
