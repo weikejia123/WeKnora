@@ -511,6 +511,48 @@ footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font
 所以：<b>看到「图谱」标签里有节点和关系，并不代表知识图谱开启了。</b>
 </div>
 
+<figure>
+<svg viewBox="0 0 680 340" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Wiki 链接图与知识图谱的名实辨析</title>
+<desc>左栏是知识库「图谱」标签实际展示的 Wiki 链接图，节点是 Wiki 页面、边是页面正文里的双链，存在 PostgreSQL；右栏是知识图谱，节点是实体、边是语义关系，存在 Neo4j，前端没有独立可视化页面。</desc>
+
+<rect x="40" y="40" width="290" height="248" rx="12" fill="#e6f1fb" stroke="#378add" stroke-width="0.5"/>
+<text x="60" y="68" font-size="14.5" font-weight="600" fill="#042c53">Wiki 链接图</text>
+<text x="60" y="88" font-size="12" fill="#185fa5">你在「图谱」标签看到的</text>
+<line x1="40" y1="102" x2="330" y2="102" stroke="#c9dff5" stroke-width="1"/>
+
+<text x="58" y="122" font-size="11.5" fill="#5f5e5a">节点</text>
+<text x="112" y="122" font-size="12.5" fill="#042c53">Wiki 页面（多种类型）</text>
+<text x="58" y="162" font-size="11.5" fill="#5f5e5a">边</text>
+<text x="112" y="162" font-size="12.5" fill="#042c53">正文里的 [[双链]] 引用</text>
+<text x="58" y="202" font-size="11.5" fill="#5f5e5a">存储</text>
+<text x="112" y="202" font-size="12.5" fill="#042c53">PostgreSQL</text>
+<text x="58" y="242" font-size="11.5" fill="#5f5e5a">用途</text>
+<text x="112" y="242" font-size="12.5" fill="#042c53">浏览知识之间的关联</text>
+<text x="58" y="272" font-size="11.5" fill="#5f5e5a">开关</text>
+<text x="112" y="272" font-size="12.5" fill="#042c53">wiki 索引（默认关）</text>
+
+<rect x="350" y="40" width="290" height="248" rx="12" fill="#eeedfe" stroke="#7f77dd" stroke-width="0.5"/>
+<text x="370" y="68" font-size="14.5" font-weight="600" fill="#26215c">知识图谱</text>
+<text x="370" y="88" font-size="12" fill="#534ab7">你以为在看的（其实没开）</text>
+<line x1="350" y1="102" x2="640" y2="102" stroke="#cecbf6" stroke-width="1"/>
+
+<text x="368" y="122" font-size="11.5" fill="#5f5e5a">节点</text>
+<text x="422" y="122" font-size="12.5" fill="#26215c">实体 Entity</text>
+<text x="368" y="162" font-size="11.5" fill="#5f5e5a">边</text>
+<text x="422" y="162" font-size="12.5" fill="#26215c">语义关系（强度 1–10）</text>
+<text x="368" y="202" font-size="11.5" fill="#5f5e5a">存储</text>
+<text x="422" y="202" font-size="12.5" fill="#26215c">Neo4j（外部图库）</text>
+<text x="368" y="242" font-size="11.5" fill="#5f5e5a">用途</text>
+<text x="422" y="242" font-size="12.5" fill="#26215c">检索时扩展相关分块</text>
+<text x="368" y="272" font-size="11.5" fill="#5f5e5a">开关</text>
+<text x="422" y="272" font-size="12.5" fill="#26215c">graph 索引（默认关）</text>
+
+<text x="340" y="316" font-size="12.5" fill="#5f5e5a" text-anchor="middle">两者都叫 graph，但在界面上只有左边的有可视化页面——右边只有开关和徽章</text>
+</svg>
+<figcaption>图 6 · 名实辨析。同一个「图谱」字样，左边是你看到的东西，右边是真正的知识图谱。</figcaption>
+</figure>
+
 <!-- ============ 7 ============ -->
 <h2 id="s7"><span class="num">7</span>知识图谱：唯一不在关系库里的数据</h2>
 
@@ -547,7 +589,7 @@ footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font
 <text x="215" y="132" font-size="11" fill="#0f6e56" text-anchor="middle">ChunkIDs</text>
 <text x="468" y="132" font-size="11" fill="#0f6e56" text-anchor="middle">ChunkIDs</text>
 </svg>
-<figcaption>图 6 · 图谱的数据结构。实体和关系都带「我出自哪些分块」，所以图谱结论可以回溯到原文。</figcaption>
+<figcaption>图 7 · 图谱的数据结构。实体和关系都带「我出自哪些分块」，所以图谱结论可以回溯到原文。</figcaption>
 </figure>
 
 <table>
@@ -629,7 +671,7 @@ footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font
 
 <text x="340" y="200" font-size="12" fill="#5f5e5a" text-anchor="middle">任意一路失败不影响其他路——所以「换个问法就搜到了」很常见</text>
 </svg>
-<figcaption>图 7 · 检索的多路召回。四路并行取证据，汇合后统一过滤与重排。</figcaption>
+<figcaption>图 8 · 检索的多路召回。四路并行取证据，汇合后统一过滤与重排。</figcaption>
 </figure>
 
 <p>代码里定义了 9 种具体的召回来源，每一路取回的证据都带「我是怎么被找到的」标记：</p>
