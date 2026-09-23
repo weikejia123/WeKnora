@@ -63,6 +63,10 @@
 | **两者同时**（embedding 驻留 + 38 页解析） | **11861 MiB** | **50 MiB** ⚠️ |
 | 再加 8 个 embedding 请求（**Ollama 侧排队串行**，非真并发） | 未再增长 | 50 MiB |
 
+> ⚠️ **此表是「MinerU 含 VLM（即 vLLM 在位）」时的场景**。2026-09-23 定案关闭 vLLM 后，
+> MinerU 侧不再占那 ≈6 GiB ⇒ 整卡余量恢复为 **5519 MiB**（见 §六-2 与 110 服务仓
+> `my-docs/30-测试报告/04-定案-管道档加小模型上GPU.md`）。
+
 - embedding 侧：`POST /api/embed`，**2560** 维；占 **4108 MiB**；冷加载 4.6 s、热态 0.15~0.31 s
 - 同时运行期间：解析产物 **106995 字符**（与单独跑一致）、embedding **8/8 返回 200**、`dmesg` 无 OOM
 - ❌ 已实测排除：调小 embedding `num_ctx` **不省显存**（4096 vs 默认同为 4108 MiB）
@@ -253,9 +257,23 @@ MinerU 4.x 是「一套 **hybrid** 框架 + 四档 effort」。先分清三层�
 Web UI 同为 `standard`）⇒ **不传 tier 就拉起 vLLM，且加载后不自动卸载**
 ⇒ 这才是 110 上那 ≈6 GiB 占用的**真正来源**，**不是** MinerU 的固有开销。
 
-⇒ **对应到接入方案**：只要 PP-OCRv6 管线就传 `tier=basic`（显存上不再与 Ollama embedding
-争那 50 MiB）；要 VLM 质量则须显式传 `standard`，并接受共卡紧张。
-**选档是 §五 三条路径的前置决策。**
+⇒ **对应到接入方案**：只要 PP-OCRv6 管线就传 `tier=basic`；要 VLM 质量则须显式传 `standard`。
+
+### ★★ 当前 110 的实际配置（2026-09-23 定案）—— 接入方必须知道
+
+服务已用 `--tier basic` **只广告 `flash` + `basic`** ⇒ **`standard` / `advanced` 会被拒**
+（传 standard 会返回 `quality_tier_unavailable`）⇒ **接入本服务时只能传 `tier=basic`**。
+
+配套：小模型用 `torch` ⇒ 版面 / 表格 / 公式 **以及 PP-OCRv6** 都在 GPU 上算
+（`model/runtime/hybrid.py` 里 onnx 路线是「强制 CPU」；torch 路线的 OCR 走
+`model/ocr/pytorch_paddle.py`，不依赖 onnxruntime）。
+
+实测（38 页 `full.pdf`）：**整卡峰值 6392 MiB、余量 5519 MiB、耗时 30 s**
+⇒ **§一那个「共卡只剩 50 MiB」的紧张已不复存在**（vLLM 不再占位）。
+详见 110 服务仓 `my-docs/30-测试报告/04-定案-管道档加小模型上GPU.md`。
+
+⚠️ **能力代价**：相比 VLM 档，**表格序号会漏识别**、**不还原中英数之间的空格**；
+正文与关键数字一致（目前仅 1 份样本验证）。
 
 **3. 显存要按峰值算（且峰值不是「KV cache 增长」）**
 
