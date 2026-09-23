@@ -465,3 +465,31 @@ POST {endpoint}/file_parse          ← 同步、multipart
 （docreader 容器近 1 小时日志为空）。
 
 ⇒ 该错误码是「文档读取阶段」的**通用标签**，别据此去查 docreader 侧。
+
+### 8.8 核实「以前用管道模式调用 MinerU 成功过」（2026-09-23）
+
+用户回忆曾成功过。**核实结论：没记错"看到过成功"，但那个成功是「引擎连通性检查通过」，
+不是解析成功；真正跑通过的解析是 PP-StructureV3（`paddleocr_vl` 引擎），不是 MinerU。**
+
+| 核查点 | 证据 | 结论 |
+|---|---|---|
+| 有没有走通 `mineru` 引擎的解析？ | 库表：唯一用 `mineru` 的是 `财政审计工作报告`（09-23 建），**仅 1 个文档**、状态 `deleting`、错误「用户已取消解析」 | ❌ **从未 completed** |
+| 日志里的 MinerU 调用 | `[MinerU] Parsing … via http://10.168.1.110:36743` **4 次**（均为同一文件）；`[MinerU] Using response path` / `Raw response` 计数 **0** —— 这两行**只在 HTTP 200 时才打印** | ❌ 4/4 失败 |
+| 110 侧 | `"POST /file_parse HTTP/1.1" 404 Not Found` × 4 | ✅ 与上吻合 |
+| 那"成功"到底是什么？ | `POST /system/parser-engines/check` → `ListAllEngines` → 对 `mineru` 调 `PingMinerU()` = **只 `GET /docs`** | ⚠️ **连通性 ≠ 契约匹配** |
+| 真正跑通过的是什么？ | 全库 **38 份 `completed`** 全在 `wkj-ppsv3-验证`／`测试1`／`(备份)财政审计工作报告`，规则 = **`paddleocr_vl`**（PPSV3 同步 `/layout-parsing`），时间 **09-22** | ✅ **是 PPSV3** |
+| 时间窗 | `min(created_at)` = 2026-09-20，`max` = 2026-09-23 | 无更早历史 |
+| 日志覆盖 | `WeKnora-app` 日志窗口 2026-09-23 11:04 → 20:36，其间 `mineru_endpoint` **只出现过 `10.168.1.110:36743` 一个值** | 没有指向过别的服务 |
+
+**为什么"管道"这个词会挂到 MinerU 上**：`mineru` 引擎抽屉里 `Backend` 字段的**默认值就是 `pipeline`（管道）**，
+示例地址也写 `:8000` —— 两者都是**旧版 MinerU 1.x/2.x 的语义**（那时 `POST /file_parse` 存在且可用）。
+⇒ 「管道模式 + mineru」在 **1.x/2.x 时代成立**，在 **4.0.6 时代不成立**。
+
+**时间线旁证**：110 上确实有过一台提供 `/file_parse` 的旧版 MinerU（`mineru:latest`，端口 8000/7860），
+但它 **2026-08-06 已停用**，而 111 上 WeKnora 的文档记录自 **09-20** 才开始 ⇒ 两者时间不重叠。
+
+**对方案 A 的额外要求（重要）**：适配器应把旧契约的 `backend` 字段**映射到 4.0.6 的档位** ——
+`pipeline` ⇒ `tier=basic`（4.x 的 hybrid 小模型管线，正是 1.x pipeline 的语义）；
+`vlm-*` / `hybrid-*` ⇒ `tier=standard`。
+⇒ 这样 WeKnora 抽屉里的 `Backend` / 解析方式 / 公式 / 表格 / 语言 那些字段会**重新变得有意义**，
+而不是被适配器忽略。
