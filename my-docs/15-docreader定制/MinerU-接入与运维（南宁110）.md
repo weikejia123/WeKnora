@@ -488,8 +488,58 @@ POST {endpoint}/file_parse          ← 同步、multipart
 **时间线旁证**：110 上确实有过一台提供 `/file_parse` 的旧版 MinerU（`mineru:latest`，端口 8000/7860），
 但它 **2026-08-06 已停用**，而 111 上 WeKnora 的文档记录自 **09-20** 才开始 ⇒ 两者时间不重叠。
 
-**对方案 A 的额外要求（重要）**：适配器应把旧契约的 `backend` 字段**映射到 4.0.6 的档位** ——
-`pipeline` ⇒ `tier=basic`（4.x 的 hybrid 小模型管线，正是 1.x pipeline 的语义）；
-`vlm-*` / `hybrid-*` ⇒ `tier=standard`。
+**对方案 A 的额外要求（重要）**：适配器应把旧契约的 `backend` 字段**映射到 4.0.6 的档位**。
+⚠️ **照 MinerU 官方口径映射，不要按直觉推**（官方 changelog 移除 `--backend` 时给的对应表）：
+
+| 旧 `backend` | 4.x 档位 |
+|---|---|
+| `pipeline` | `tier=basic` |
+| `vlm-engine` / `vlm-auto-engine` / `vlm-http-client` | **`tier=advanced`** |
+| `hybrid-engine` / `hybrid-auto-engine` | `tier=standard`（或不传） |
+| `flash` | `tier=flash` |
+
+> ★ **一处自我订正**：本节初版把 `vlm-*` 写成 `tier=standard`，**这是错的** —— 官方口径是 `advanced`。
+> 记下来当反例：**映射关系要以官方迁移/变更文档为准，不能按名字的字面语义推**。
+
 ⇒ 这样 WeKnora 抽屉里的 `Backend` / 解析方式 / 公式 / 表格 / 语言 那些字段会**重新变得有意义**，
 而不是被适配器忽略。
+
+### 8.9 为什么「WeKnora 有 MinerU 配置却跑不通」——版本不对，而且是**刚发生**的（2026-09-23 定案）
+
+**结论**：是版本不对，但更准确的说法是**契约代际不对**。而且**不是我们配错，也不是上游偷懒** ——
+是 **MinerU 4.0 在 2026-09-16 做了一次不兼容重构**，本机 09-23 才接上，**中间只隔 7 天**。
+
+**两边时间线对照**（各自仓库 git 实测）
+
+| 时间 | 谁 | 事件 | 契约状态 |
+|---|---|---|---|
+| 2025-06-25 | MinerU `3f87f83f` | 加 FastAPI 自托管服务与 `/file_parse` | 旧契约诞生 |
+| **2026-02-28** | WeKnora `397689d2` | 引入 `mineru` 自托管引擎（Lite edition） | **照旧契约写** |
+| **2026-03-04** | WeKnora `fd742fea` | 定型 MinerU 响应处理（`{"results":{stem:{md_content,images}}}`） | 最后定型 |
+| 2026-03-19 | MinerU `1d96a77a` | FastAPI 改异步（加 `/tasks`），但**保留** `/file_parse` | 兼容期 |
+| 3.x 全程 | MinerU | 官方 changelog：保留 `/file_parse` **"for compatibility with legacy plugins"** | 兼容期 |
+| 2026-05~07 | WeKnora | 仍在做 MinerU 参数增强（`mineru_vlm_server_url`、SSRF 加固） | 仍是旧契约参数 |
+| **2026-09-16** | MinerU `22f5abb6` | **4.0.0 正式发布：`/file_parse`、`/tasks` 不再提供** | **契约死亡** |
+| 2026-09-23 | 本机 | 接入 → `POST /file_parse` **404** | 相隔 7 天 |
+
+⇒ **WeKnora 的集成代码比 MinerU 的 API 重构早了半年**；在 3.x 全程它都是对的，一直到 4.0 把它作废。
+⇒ 所以"正常配置就能跑通"这个假设，**在 2026-09-16 之前是成立的**。
+
+**为什么"配置看起来完备"反而是陷阱**（三层，都很具体）
+
+1. **字段是照旧契约设计的**：`Backend` 下拉的五个值 `pipeline` / `vlm-auto-engine` / `vlm-http-client` /
+   `hybrid-auto-engine` / `hybrid-http-client` —— **正是 MinerU 4.0 明确移除的 `--backend` 取值**。
+   ⇒ 这个下拉框本身就是**旧契约时代的化石**：字段越齐全，越像"配好了"。
+2. **检查按钮验的不是契约**：`POST /system/parser-engines/check` → `PingMinerU()` 只做 `GET /docs`，
+   而 4.0.6 的 `MINERU_API_ENABLE_FASTAPI_DOCS` **默认 True**（`api_server.py:2383`）⇒ 永久绿灯。
+3. **没有任何版本护栏**：WeKnora 官方 `docs/` **从未写明 MinerU 版本要求**（版本号 grep 0 命中），
+   MinerU 也**不随 WeKnora 分发容器**（`docker-compose*.yml` 里没有）⇒ 版本责任推给使用者，
+   但既无检查也无提示。
+
+**正本在 MinerU 侧**：`my-docs/10-现状与运维/02-注意事项与坑.md` **§18** —— 含官方迁移文档引文、
+`/file_parse` 存亡时间线、`backend→tier` 官方映射表、以及探测盲区的端点实测（`/docs` 200 / `/file_parse` 404）。
+
+**由此得一条可迁移的判据**（以后接任何外部解析服务都适用）
+
+> **配置字段齐全 ≠ 契约匹配；探测绿灯 ≠ 能调用。**
+> 接第三方服务时第一件事是**核对它对标的 API 代际与发布日**，而不是先调参数。
