@@ -1,7 +1,7 @@
 # MinerU 4.0.6 接入与运维（南宁 110）
 
 > ★★ **当前状态：服务已跑通（含 Web UI），但尚未接入 WeKnora**（见 §五）。
-> 与此同时 **PP-StructureV3 已停止**（见同目录 `PP-StructureV3-接入与运维（南宁110）.md` §七）
+> 与此同时 **PP-StructureV3 的容器已删除**（见同目录 `PP-StructureV3-接入与运维（南宁110）.md` §七）
 > ⇒ **目前 WeKnora 的 `paddleocr_vl` 引擎实际不可用**（正式库不受影响，它们用 `anydoc`）。
 >
 > **一句话**：同机新部署的**通用文档解析服务**，`110:36743`。契约是**异步 job 式 `/v1/*`**，
@@ -27,6 +27,7 @@
 | 接口形态 | **异步**：建 upload → 传字节 → 提交 job → 轮询 → 下载产物 |
 | 并发 | vLLM 异步调度（与 PPSV3 的串行排队不同） |
 | WeKnora 侧配合改动 | **无**（尚未接入） |
+| **本机定位** | ⭐ **110 上唯一的 OCR 服务**（2026-09-23 用户决策）。同机 PP-StructureV3、PP-OCRv6（CPU/GPU）、PaddleOCR-VL 的**容器已全部删除、镜像保留**；110 的常驻 AI 组合 = **本服务 + Ollama 的 embedding 模型** |
 
 **实测 `tier=standard` 的产物形态**（用 PPSV3 同批样本测）
 
@@ -49,6 +50,33 @@
 
 > ⚠️ **`GET /v1/health` 通过 ≠ 可解析** —— VLM 引擎**懒加载**，首次解析才起 vLLM（约 30 s）。
 > 验收必须走真实解析，不能只看 health。
+
+### ★ 同机共卡：与 Ollama `qwen3-embedding:4b` 共存（实测 2026-09-23）
+
+用户规划：110 的常驻服务 = **MinerU + Ollama 的 qwen embedding**（Ollama `11434`，
+`KEEP_ALIVE=1h`）。两者能否同时用 —— 已实测：
+
+| 场景 | 显存 used 峰值 | 余量 |
+|---|---|---|
+| MinerU 单独解析 38 页 | 8722 MiB | 3566 MiB |
+| embedding 驻留（无解析） | 10861 MiB | 1050 MiB |
+| **两者同时**（embedding 驻留 + 38 页解析） | **11861 MiB** | **50 MiB** ⚠️ |
+| 再加**并发** 8 次 embedding 请求 | 未再增长 | 50 MiB |
+
+- embedding 侧：`POST /api/embed`，**2560** 维；占 **4108 MiB**；冷加载 4.6 s、热态 0.15~0.31 s
+- 同时运行期间：解析产物 **106995 字符**（与单独跑一致）、embedding **8/8 返回 200**、`dmesg` 无 OOM
+- ❌ 已实测排除：调小 embedding `num_ctx` **不省显存**（4096 vs 默认同为 4108 MiB）
+
+⇒ **结论：可以同时使用，但余量很薄（50 MiB）**。若日后要留安全余量，可
+① 下调 MinerU `--gpu-memory-utilization`（当前 `0.5`，见 §三）；
+② 调短 Ollama `KEEP_ALIVE`（当前 1h）；
+③ 换更小的 embedding 模型。
+
+> ⚠️ **与 WeKnora 的关系**：当前 **111 侧 WeKnora 的 embedding 不指向本服务** ——
+> 其 `OLLAMA_BASE_URL` 为 `http://host.docker.internal:11434`（**111 本机** Ollama），
+> `config.yaml` 中亦无 embedding 模型配置。故本共存关系与 WeKnora 现行链路**无耦合**；
+> 若将来把 WeKnora 的向量化改指 110，需重新评估并发（那时"解析 → 向量化"会串在同一条链路，
+> 并发概率显著高于本次测试的独立调用）。
 
 ---
 
@@ -192,7 +220,7 @@ WeKnora 的 `paddleocr_vl` 引擎读的是 **PPSV3 契约**
 | 要看什么 | 去哪 |
 |---|---|
 | 服务实现 / 设计 / 运维与坑（**权威**） | `110:/mnt/docker-data/docker-deploy/mineru/` → `my-docs/` |
-| 同机另一解析服务 PP-StructureV3（**已停**） | `PP-StructureV3-接入与运维（南宁110）.md`（本目录） |
+| 同机另一解析服务 PP-StructureV3（**容器已删**，镜像保留） | `PP-StructureV3-接入与运维（南宁110）.md`（本目录） |
 | 为什么当初选 PPSV3 | `WeKnora-扫描件PDF解析质量对比与选型.md` |
 | 解析引擎的通用机制 | `my-docs/04-功能机制解析/WeKnora-解析引擎接入机制.md` |
 
