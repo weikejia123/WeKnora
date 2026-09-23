@@ -551,9 +551,10 @@ SSRF_WHITELIST=host.docker.internal,localhost,127.0.0.1,10.168.1.110,10.168.1.11
 **不会失败**（已验证）——Ollama 侧 `OLLAMA_LOAD_TIMEOUT=5m`，且 WeKnora 侧
 embedding 客户端未设超时（`request_timeout_seconds` 未配置 ⇒ `Timeout=0`）。
 
-> 配置与共卡的完整说明在 110 的独立仓库：
-> `/opt/docker-deploy/pp-structure-v3/` → `my-docs/10-现状与运维/`（`01-服务运行现状.md` §7
-> 讲与同机服务的关系；`02-注意事项与坑.md` E 节讲运维操作）。
+> 配置与共卡的完整说明在 110 的独立仓库。
+> ★ 同机解析服务已于 **2026-09-23 变更为 MinerU 4.0.6**（PP-StructureV3 已停止），
+> 显存账本的权威记录见 `15-docreader定制/MinerU-接入与运维（南宁110）.md`；
+> 旧的共卡说明仍在 `/mnt/docker-data/docker-deploy/pp-structure-v3/` → `my-docs/10-现状与运维/`。
 
 ---
 

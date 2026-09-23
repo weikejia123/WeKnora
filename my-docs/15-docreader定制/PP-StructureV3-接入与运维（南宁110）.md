@@ -1,5 +1,10 @@
 # PP-StructureV3 接入与运维（南宁 110）
 
+> ★★ **当前状态：容器已停止**（2026-09-23，为 MinerU 让出显存，见 §七）。
+> 镜像与模型均保留，一条命令可恢复。
+> 本文档其余章节记录的是**恢复后**的可用形态 —— 未恢复前，页面上的
+> `PaddleOCR-VL` 引擎**实际不可用**（测试连接会失败，不是假阳性）。
+>
 > **一句话**：WeKnora 的**扫描件 PDF 解析后端**。服务跑在 `110:36742`，
 > 契约复刻 PaddleX 官方 `POST /layout-parsing` ⇒ WeKnora 的 `paddleocr_vl` 引擎**零代码接入**。
 >
@@ -12,6 +17,7 @@
 
 | 项 | 值 |
 |---|---|
+| **当前状态** | ★ **已停止**（2026-09-23）—— 见 §七 |
 | 服务地址 | `http://10.168.1.110:36742` |
 | 健康检查 | `GET /api/health` ⇒ `status / device / pipeline_loaded / queue_depth / max_queue / settings / gpu_free_mb` |
 | 容器 / 镜像 | `pp-structure-v3-api` / `pp-structure-v3:20260922` |
@@ -230,7 +236,8 @@ PP-OCRv6 单图 OCR 服务做 OCR。
 
 | 要看什么 | 去哪 |
 |---|---|
-| 服务实现 / 设计 / 运维与坑（**权威**） | `110:/opt/docker-deploy/pp-structure-v3/` → `my-docs/` |
+| 服务实现 / 设计 / 运维与坑（**权威**） | `110:/mnt/docker-data/docker-deploy/pp-structure-v3/` → `my-docs/` |
+| ★ **同机新服务 MinerU 4.0.6**（`36743`） | `MinerU-接入与运维（南宁110）.md`（本目录） |
 | 为什么选它（选型依据） | `WeKnora-扫描件PDF解析质量对比与选型.md` |
 | 解析引擎的通用机制（引擎列表从哪来 / 能否配 endpoint） | `my-docs/04-功能机制解析/WeKnora-解析引擎接入机制.md` |
 | 已搁置的 docreader 路径 | `WeKnora-docreader接入PP-OCRv6方案.md` |
@@ -238,3 +245,33 @@ PP-OCRv6 单图 OCR 服务做 OCR。
 > 服务是**独立 git 仓库**，提交用 `git -c user.name=wkj -c user.email=wkj@local commit`。
 > ⚠️ 该机器上 `/opt/docker-deploy` 是软链 → `/mnt/docker-data/docker-deploy`；
 > 且 **`/mnt` 是文件系统边界**，从别处 `cd` 进不去。
+
+---
+
+## 七、★ 停用与恢复（2026-09-23）
+
+**为什么停**：同机上新部署了 **MinerU 4.0.6**（`36743`，见同目录
+`MinerU-接入与运维（南宁110）.md`）。单卡 12 GB 上 MinerU 常态占 6.9 GiB、
+峰值 8.7 GiB ⇒ 与本服务（常态 4.2 GiB）**无法共存**，故停本服务让出显存。
+
+**影响面（已核实，非推断）**：111 侧 WeKnora 的**正式库不受影响** ——
+
+| 库 | 解析引擎 |
+|---|---|
+| 正式库（财政领域 / 预算执行常态化审查等） | `anydoc` |
+| 测试库 `wkj-ppsv3-验证`、`测试1` | `paddleocr_vl` ← **仅这两个** |
+
+⇒ 停用只影响那两个测试库；正式库解析链路无变更。
+
+**容器状态**：`Exited (143)`；`restart: unless-stopped`
+⇒ **宿主机重启也不会自行拉起**，需显式恢复。
+
+**恢复命令**：
+
+```bash
+cd /mnt/docker-data/docker-deploy/pp-structure-v3 && docker compose up -d
+```
+
+**恢复后需注意**：显存账本要重算（届时 MinerU 若仍在跑，两者合计 11.1 GiB 常态、
+峰值可到 12.9 GiB ⇒ **超卡**）。恢复前应先停 MinerU 或下调其
+`--gpu-memory-utilization`。
