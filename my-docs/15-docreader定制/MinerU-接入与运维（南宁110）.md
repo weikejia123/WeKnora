@@ -38,15 +38,18 @@
 | `audit_3p.pdf`（3 页） | 正文逐字正确；耗时 7 s（热态） |
 | `full.pdf`（38 页） | 107 KB markdown；耗时 60 s |
 
-**显存（12 GB 卡，实测）**
+**显存（12 GB 卡，实测；配置 = `--tier standard` + `util=0.4` + `处理窗口=15`）**
 
 | 场景 | 占用 |
 |---|---|
-| 引擎已加载、空闲（常态） | **7020 MiB** |
-| 38 页文档解析中峰值 | **8722 MiB** |
-| 解析后回落 | 7048 MiB |
+| 114 页文档解析中峰值（MinerU 单侧，无 embedding） | **6644 MiB** |
+| MinerU 稳定态（vLLM 冷启涨到位后） | **7358 MiB = 7.19 GB** |
+| 容器内存峰值（114 页） | **7.83 GiB** |
 
-拆分明细：`VLLM::EngineCore` 5434 MiB（权重 2.16 GiB + KV cache） + API 主进程 704 MiB。
+拆分明细（稳定态）：`VLLM::EngineCore` **5532 MiB** + API 主进程 `python3` **1826 MiB**。
+
+> ⚠️ **口径**：解析中会采到 `EngineCore` 只有 4660 MiB 的**冷启读数**，稳定态是 **5532 MiB**
+> （vLLM 的 CUDA graph 池按实际用到的 batch size 逐个 materialize）。**算预算取稳定态。**
 
 > ⚠️ **`GET /v1/health` 通过 ≠ 可解析** —— VLM 引擎**懒加载**，首次解析才起 vLLM（约 30 s）。
 > 验收必须走真实解析，不能只看 health。
@@ -58,23 +61,27 @@
 
 | 场景 | 显存 used 峰值 | 余量 |
 |---|---|---|
-| MinerU 单独解析 38 页 | 8722 MiB | 3566 MiB |
-| embedding 驻留（无解析） | 10861 MiB | 1050 MiB |
-| **两者同时**（embedding 驻留 + 38 页解析） | **11861 MiB** | **50 MiB** ⚠️ |
-| 再加 8 个 embedding 请求（**Ollama 侧排队串行**，非真并发） | 未再增长 | 50 MiB |
+| MinerU 单独解析 114 页（窗口 15，VLM 档） | 6644 MiB | 5267 MiB |
+| embedding 驻留（无解析） | 9587 MiB | 2324 MiB |
+| **两者同时**（embedding 驻留 + 114 页解析 + 周期性并发 embedding 请求） | **11821 MiB** | **90 MiB** ⚠️ |
 
-> ⚠️ **此表是「MinerU 含 VLM（即 vLLM 在位）」时的场景**。2026-09-23 定案关闭 vLLM 后，
-> MinerU 侧不再占那 ≈6 GiB ⇒ 整卡余量恢复为 **5519 MiB**（见 §六-2 与 110 服务仓
-> `my-docs/30-测试报告/04-定案-管道档加小模型上GPU.md`）。
+> ⚠️ **此表是「MinerU 含 VLM（即 vLLM 在位）」场景，也是当前实际**。峰值构成：
+> `VLLM::EngineCore` 5532 + `python3`（小模型）1826 + Ollama `llama-server` 4300 + 基础 138。
+> 旧配置（util 0.5）为 11861 MiB / 余 50 MiB ⇒ **util 从 0.5 收到 0.4 只换回 40 MiB**，
+> 因为瓶颈是**双方各自的权重**（且两边预算互相看不见），不是 KV cache。
 
 - embedding 侧：`POST /api/embed`，**2560** 维；占 **4108 MiB**；冷加载 4.6 s、热态 0.15~0.31 s
 - 同时运行期间：解析产物 **106995 字符**（与单独跑一致）、embedding **8/8 返回 200**、`dmesg` 无 OOM
 - ❌ 已实测排除：调小 embedding `num_ctx` **不省显存**（4096 vs 默认同为 4108 MiB）
 
-⇒ **结论：可以同时使用，但余量很薄（50 MiB）**。若日后要留安全余量，可
-① 下调 MinerU `--gpu-memory-utilization`（当前 `0.5`，见 §三）；
-② 调短 Ollama `KEEP_ALIVE`（当前 1h）；
-③ 换更小的 embedding 模型。
+⇒ **结论：可以同时使用，但余量很薄（90 MiB）**，属"可用但无安全边际"。
+
+- ✅ **已实施**：下调 MinerU `--gpu-memory-utilization` 到 **0.4**（见 §三）。⚠️ 只换回 40 MiB。
+- ⚠️ **12 GB 卡的天花板**：可用 11911 MiB（`used+free`；卡报 12288 含 377 驱动保留）；
+  MinerU(VLM) 最小可行 **7.19 GB** + embedding **4.30 GB** = **11.49 GB ⇒ 理论余量 ≈140 MiB**。
+  ⇒ **能放下，但要真余量只能牺牲 VLM**（走 `basic` 档 ⇒ MinerU ≈2.3 GB、余 ≈5 GB）。
+- 仍可用但未实施：① 调短 Ollama `KEEP_ALIVE`（当前 1h，用完即卸可彻底错峰）；
+  ② 换更小的 embedding 模型。
 
 > ⚠️ **与 WeKnora 的关系**：当前 **111 侧 WeKnora 的 embedding 不指向本服务** ——
 > 其 `OLLAMA_BASE_URL` 为 `http://host.docker.internal:11434`（**111 本机** Ollama），
@@ -123,7 +130,7 @@ MinerU 建在**通用 vLLM 镜像**上（基底单独 32.9 GB），含完整 CUD
 
 vLLM 默认 `gpu_memory_utilization=0.9`（12 GB 卡会先占 10.8 GB），**MinerU 不用它**。
 
-源码 `mineru/model/vlm/engine_utils.py:94`：
+上游源码 `mineru/model/vlm/engine_utils.py` 的 `set_default_gpu_memory_utilization()`：
 
 ```python
 def set_default_gpu_memory_utilization(backend="vllm") -> float:
@@ -150,18 +157,54 @@ GPU KV cache size: 187,568 tokens
 ```
 
 ⇒ 预算 6144 MiB 里：**KV cache 2.15 GiB + 权重约 2.16 GiB + 激活/CUDA graph/非 torch≈1.6 GiB**。
-实测 `VLLM::EngineCore` 进程 **6108 MiB**，与 6144 预算吻合。
+
+### ★ 本机已收窄到 `0.4`（实测 2026-09-23，含下限）
+
+上游该值是**硬编码 6GB 预算**，api-server CLI 与 `VlmConfig` **均无入口**
+⇒ 本机给 `engine_utils.py` 加了 **`MINERU_VLLM_GPU_MEMORY_UTILIZATION` 环境变量覆盖口**
+（14 行；未设即完全走上游原逻辑）。compose 现设 **`0.4`**。
+
+| util | 预算 | vLLM 自报 `Available KV cache` | `GPU KV cache size` | 8192-token 并发 | 结果 |
+|---|---|---|---|---|---|
+| **0.3** | 3686 MiB | **−0.18 GiB** | — | — | ⛔ `No available memory for the cache blocks`，**引擎起不来** |
+| **0.4**（在用） | 4915 MiB | 0.98 GiB | **85,936 tokens** | **10.49×** | ✅ |
+| 0.5（上游默认） | 6144 MiB | 2.15 GiB | 187,568 tokens | 22.90× | — |
+
+- **下限 ≈ 0.32** = 固定开销 ÷ 卡总显存（实测固定开销 ≈ **3.7~3.9 GB**：权重 bf16 2.15 GiB +
+  激活/CUDA graph/非 torch ≈1.6 GiB，**与 util 无关**）。
+- **失败形式可预期**：util 过低是**启动期**报错，不是解析时 OOM ⇒ 改动是否安全立刻可见。
+  但若只是"偏小"，解析会退化为**抢占重算**——**变慢但不报错**，所以改小后要跑一次真实解析复验。
+- vLLM 原文：`--gpu-memory-utilization=0.4000 is equivalent to 0.3842 without CUDA graph
+  memory profiling` ⇒ v0.21 默认开 CUDA graph profiling，名义值要打折，算下限别漏。
+- ★ **85,936 tokens 够用**：util 0.4 与 0.5 的解析耗时**无系统性差异**（±12% 噪声内）
+  ⇒ **187,568 tokens 属明显过配**，KV cache 不是瓶颈。
 
 **并发上限 = `min(KV cache 容量, MinerU 自限 batch_size)`**。`set_default_batch_size()`
-（同文件 `:114`）按显存档位取 `≥16 GB → 8`、`≥8 GB → 4` ⇒ 本机为 **4**。
-`4 × 单序列长度 ≪ 187,568 tokens` ⇒ **KV cache 不是瓶颈，权重才是**。
-这也是「下调 `--gpu-memory-utilization` 主要压 KV cache、**不必然损失并发**」的依据
-（真实下限需实测：util 过低会让 vLLM 因 KV cache 不足而在启动期报错）。
+（同文件）按显存档位取 `≥16 GB → 8`、`≥8 GB → 4` ⇒ 本机为 **4**。
 
-⚠️ **共卡陷阱**：`get_vram()` 取的是**整卡总显存**、**不减去**同机 Ollama 已占的 4108 MiB
-⇒ 两个进程**各算各的预算**。12 GB 卡上共存余量只剩 50 MiB，根因就在这里。
+⚠️ **共卡陷阱**：`get_vram()` 取的是**整卡总显存**、**不减去**同机 Ollama 已占的 4300 MiB
+⇒ 两个进程**各算各的预算**。共存余量只剩 90 MiB，根因就在这里。
 
-可用 `--gpu-memory-utilization` 显式覆盖（**要往下压显存就改这里**）。
+### ★★ 显存峰值不随页数增长：处理窗口（**"500 页 PDF 会不会炸"的答案**）
+
+`MINERU_PROCESSING_WINDOW_SIZE`（`backend/analysis/pdf/window.py`，**官方默认 64 页**；
+**本机设为 15**）：PDF 被切成窗口**串行**处理，窗口内跑完就关闭图像、进下一窗。
+
+⇒ 峰值 = **`min(总页数, 窗口)` × 窗口内并发**，**与总页数无关**
+⇒ **500 页 PDF = ⌈500/窗口⌉ 个窗口串行，峰值与一份同复杂度的窗口大小文档相同**。
+
+窗口 A/B 实测（同一份 114 页文档、同 util=0.4）：
+
+| | 窗口 64 | 窗口 15（在用） |
+|---|---|---|
+| 整卡 used 峰值 | 7876 MiB | **6644 MiB**（−15.6%） |
+| 容器内存峰值 | 10.62 GiB | **7.83 GiB**（−26%） |
+| 耗时 | 212 s | 189 s |
+| 产物字节 | 320989 | 320989（**一致**）|
+
+⇒ **对下游的影响**：窗口变小**不影响产物**；吞吐本例反而更快（内存回收更早）。
+若将来为提高吞吐而调大窗口，**必须先核显存**。详见 110 服务仓
+`my-docs/30-测试报告/05-显存预算上限与窗口机制（7.5G目标验证）.md`。
 
 ---
 
@@ -257,45 +300,58 @@ MinerU 4.x 是「一套 **hybrid** 框架 + 四档 effort」。先分清三层�
 Web UI 同为 `standard`）⇒ **不传 tier 就拉起 vLLM，且加载后不自动卸载**
 ⇒ 这才是 110 上那 ≈6 GiB 占用的**真正来源**，**不是** MinerU 的固有开销。
 
-⇒ **对应到接入方案**：只要 PP-OCRv6 管线就传 `tier=basic`；要 VLM 质量则须显式传 `standard`。
+⇒ **对应到接入方案**：只要 PP-OCRv6 管线就传 `tier=basic`（省 ≈5 GiB）；要 VLM 质量传 `tier=standard`
+（**当前 110 四档全开**，见下条）。
 
-### ★★ 当前 110 的实际配置（2026-09-23 定案）—— 接入方必须知道
+### ★★ 当前 110 的实际配置（2026-09-23）—— 接入方必须知道
 
-服务已用 `--tier basic` **只广告 `flash` + `basic`** ⇒ **`standard` / `advanced` 会被拒**
-（传 standard 会返回 `quality_tier_unavailable`）⇒ **接入本服务时只能传 `tier=basic`**。
+**四档全部可用**（compose 的 `command` 为 `--tier standard`）：
+`flash` / `basic` / `standard` / `advanced` ⇒ **接入方按需传 `tier`**；不传即 `standard`。
+显存由另两个旋钮收窄（⭐ 用户目标：**保留高级解析能力且 MinerU ≤ 7.5 GB**）：
 
-配套：小模型用 `torch` ⇒ 版面 / 表格 / 公式 **以及 PP-OCRv6** 都在 GPU 上算
+| 旋钮 | 值 | 作用 |
+|---|---|---|
+| `--tier` | **`standard`** | 保留 VLM 档（`basic` 的代价见下） |
+| `MINERU_VLLM_GPU_MEMORY_UTILIZATION` | **`0.4`** | vLLM 预算 6GB→4.8GB，下限 ≈0.32（见 §三） |
+| `MINERU_PROCESSING_WINDOW_SIZE` | **`15`** | 峰值不随页数增长（见 §三 末） |
+
+小模型用 `torch` ⇒ 版面 / 表格 / 公式 **以及 PP-OCRv6** 都在 GPU 上算
 （`model/runtime/hybrid.py` 里 onnx 路线是「强制 CPU」；torch 路线的 OCR 走
 `model/ocr/pytorch_paddle.py`，不依赖 onnxruntime）。
 
-实测（38 页 `full.pdf`）：**整卡峰值 6392 MiB、余量 5519 MiB、耗时 30 s**
-⇒ **§一那个「共卡只剩 50 MiB」的紧张已不复存在**（vLLM 不再占位）。
-详见 110 服务仓 `my-docs/30-测试报告/04-定案-管道档加小模型上GPU.md`。
+实测（114 页）：**整卡峰值 6644 MiB、容器内存 7.83 GiB、189 s**；MinerU 稳定态 **7.19 GB**。
+⚠️ 但**与同机 embedding 共存时整卡余量只有 90 MiB**（见 §一 共存表）—— 若同时在 110 上跑
+向量化，需知道这条链路是"刚好塞得下"而非"有调度余量"。
 
-⚠️ **能力代价**：相比 VLM 档，**表格序号会漏识别**、**不还原中英数之间的空格**；
-正文与关键数字一致（目前仅 1 份样本验证）。
+⚠️ **若要省显存可退回 `basic` 档**（把 `--tier` 改成 `basic` ⇒ vLLM 永不加载，MinerU ≈2.3 GB）：
+代价是**表格序号会漏识别**、**不还原中英数之间的空格**；正文与关键数字一致（仅 1 份样本验证）。
 
 ⇒ **若下游需要表格的「结构化语义」**（合并单元格 rowspan、表头与数据关联），
-应恢复 VLM 档 —— 官方四档：`flash` 极速 / `basic` 基础 / `standard` 标准 / `advanced` 高级，
+**传 `tier=standard` 即可 —— 当前配置已包含 VLM 档**。
+官方四档：`flash` 极速 / `basic` 基础 / `standard` 标准 / `advanced` 高级，
 **VLM 只在 `standard`(high) / `advanced`(xhigh) 加载**（`pipeline.py`：
-`if effort in {"high","xhigh"}: get_vlm_predictor(...)`）。恢复方法见 110 服务仓
-`my-docs/30-测试报告/04-…` 与 `01-现状与运维/01-服务运行现状.md` 的「VLM 档多出的能力」表。
+`if effort in {"high","xhigh"}: get_vlm_predictor(...)`）。
+能力对照见 110 服务仓 `my-docs/10-现状与运维/01-服务运行现状.md` 的「关掉 vLLM 后放弃了什么」表。
 
-**3. 显存要按峰值算（且峰值不是「KV cache 增长」）**
+**3. 显存要按峰值算，且口径取「稳定态」**
 
-静态 7020 MiB，38 页文档解析中冲到 **8722 MiB** ⇒ 估余量必须按峰值。
-⚠️ 但那个增长**不是** KV cache：vLLM 的 KV cache 在**启动期按 `gpu_memory_utilization`
-一次预分配、运行期不增长**（启动日志 `Available KV cache memory: 2.15 GiB` 即最终值）。
-另：**仅 `standard` / `advanced` 档才有这笔 vLLM 开销**（见上条）。
+当前配置（util 0.4 + 窗口 15，VLM 档）：114 页解析峰值 **6644 MiB**；
+MinerU 稳定态 **7358 MiB = 7.19 GB**。
+⚠️ 解析中会采到 `VLLM::EngineCore` 只有 4660 MiB 的**冷启读数**，稳定态是 **5532 MiB**
+（vLLM 的 CUDA graph 池按实际用到的 batch size 逐个 materialize）⇒ **算预算必须取稳定态**。
+⚠️ 峰值增量**不是** KV cache：vLLM 的 KV cache 在启动期一次预分配、运行期不增长。
 
-★★ **那增量到底在哪（2026-09-23 按进程实测，38 页）**：`VLLM::EngineCore` **恒定
-6108 MiB、纹丝不动**；增量**全在 API 主进程**（484 → **1484** MiB，+1000）
-—— 是 `MINERU_MODEL_SMALL_BACKEND=torch` 的**版面 / 表格 / 公式小模型在 GPU 上跑**的开销。
+★★ **那增量到底在哪（2026-09-23 按进程实测）**：`VLLM::EngineCore` **有固定上限、
+不随页数增长**（KV cache 启动期预分配）；增量**全在 API 主进程 `python3`**
+（484 → **1484~2160** MiB）—— 是 `MINERU_MODEL_SMALL_BACKEND=torch` 的
+**版面 / 表格 / 公式小模型在 GPU 上跑**的开销。
 
-⇒ **两条可操作结论**：
-- 调 `--vlm-max-concurrency` 对峰值显存**无效**（vLLM 侧有固定上限、不随页数增长）
+⇒ **三条可操作结论**：
+- **页数维度**：调 `MINERU_PROCESSING_WINDOW_SIZE`（见 §三 末）——**最有效的显存杠杆**
+- 调 `--vlm-max-concurrency` 对峰值显存**无效**（KV cache 启动期一次预分配）
 - 要把它**挪到内存**：改 **`MINERU_MODEL_SMALL_BACKEND=onnx`** —— 本容器
-  `onnxruntime.get_available_providers()` 只有 `[Azure, CPU]`（**无 CUDA**）⇒ 小模型转 CPU。
+  `onnxruntime.get_available_providers()` 只有 `[Azure, CPU]`（**无 CUDA**）⇒ 小模型转 CPU
+  （代价大：38 页 18 s → 75 s；**只在必须共卡时才划算**，当前不用）。
   ★ **已实测（2026-09-23，详见 110 服务仓 `my-docs/30-测试报告/`）**：
   `python3` 显存**归零**、MinerU 侧峰值 **7592 → 6392 MiB（6.24 GB，达成 ≤7G ✅）**、
   38 页产物 **106995 字节逐字节一致**；代价 **38 页 18 s → 75 s（×4.2）**
