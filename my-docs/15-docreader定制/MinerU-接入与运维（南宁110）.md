@@ -252,7 +252,7 @@ http://10.168.1.110:36744
 
 ---
 
-## 五、★ 接入 WeKnora：三条路径（**尚未决策**）
+## 五、★ 接入 WeKnora：三条路径（**尚未决策**；契约不兼容已实测坐实，见 §八）
 
 WeKnora 的 `paddleocr_vl` 引擎读的是 **PPSV3 契约**
 （`result.layoutParsingResults[].markdown.text`），与 MinerU 的异步 job 契约不兼容
@@ -389,3 +389,79 @@ MinerU 稳定态 **7358 MiB = 7.19 GB**。
 > 服务是**独立 git 仓库**（分支 `wkj-dev`，remote `upstream` 带 `gh-proxy.com` 前缀）。
 > ⚠️ `/mnt/docker-data/docker-deploy/mineru/` 的父目录属 `root`，新建项目需
 > `sudo mkdir` + `sudo chown wkj:wkj`。
+
+---
+
+## 八、★ 接入 WeKnora 实测结论（2026-09-23）：**契约不兼容，`POST /file_parse` 404**
+
+用户已在 WeKnora 把 PDF 解析引擎设为 `mineru`、`mineru_endpoint=http://10.168.1.110:36743`，
+但上传 PDF 后报「**读取文档失败**」。已定位到根因，证据链如下。
+
+### 8.1 证据链（三步闭合）
+
+| # | 证据 | 位置 |
+|---|---|---|
+| 1 | 引擎确实被选中并调用：`[convert] kb=… fileType=pdf engine="mineru"` | `WeKnora-app` 日志 `knowledge_process.go:3949` |
+| 2 | 请求确实打到 110：`[MinerU] Parsing file=2025年…_扫描版.pdf size=27215815 via http://10.168.1.110:36743` | `mineru_converter.go:81` |
+| 3 | **110 侧访问日志：`"POST /file_parse HTTP/1.1" 404 Not Found` × 4**（与前端 `attempt=4` 吻合） | `docker logs mineru-api` |
+
+另有一条**时序旁证**：从发起到失败仅 **1.2 s**，而这份 38 页扫描件真实解析需 **≥18 s**
+⇒ 是「被立刻拒绝」，不是超时或解析失败。
+
+### 8.2 根因：两套 API 契约不同
+
+**WeKnora 的自托管 MinerU 引擎按「经典同步契约」实现**（`mineru_converter.go:236`）：
+
+```
+POST {endpoint}/file_parse          ← 同步、multipart
+  字段：files(文件) + return_md=true + return_images=true + parse_method + backend
+        + table_enable + formula_enable + start_page_id=0 + end_page_id=99999
+        + lang_list + return_content_list=true + response_format_zip=false …
+  响应：{"results": {"<上传文件名去扩展名>": {"md_content": "...", "images": {"<路径>": "<base64 或 data-uri>"}}}}
+        （键回退顺序：stem → "document" → "files" → 任意非空 entry）
+```
+
+**MinerU 4.0.6 只提供 `/v1/*` 异步 job 契约**（upload → PUT → complete → job → poll → download）：
+
+- `mineru/parser/api_server.py` 只有 `APIRouter(prefix="/v1")`
+- **全仓 grep `file_parse` = 0 命中** ⇒ 4.0.6 已彻底移除旧同步 API
+- `mineru-kit` 子命令只有 `parse / webui / api-server / vlm-server / router / models`
+  —— 其中 `router` 也只是「仅暴露 **V1** API」，**没有**旧契约兼容服务
+
+### 8.3 为什么"看起来配置是好的"——探测点与解析点不是同一个
+
+`CheckAvailable` → `PingMinerU()` 只做一件事：**`GET {endpoint}/docs`** 且状态码 < 400。
+
+- 110 的 `enable_docs` 默认 **True**（`api_server.py`：`MINERU_API_ENABLE_FASTAPI_DOCS`，默认 True）
+  ⇒ `/docs` 返回 **200** ⇒ UI 显示引擎「可用/已连接」
+- 但真正解析走的是 `/file_parse` ⇒ **404**
+
+⇒ **「探测通过」≠「契约匹配」**。这是本轮最容易误判的一点：UI 的绿灯只证明"那台机器上有个 FastAPI"。
+
+### 8.4 上游有没有解？没有
+
+- 本地 `wkj-dev` 与 `upstream/main` 同步（落后 **0** 提交）
+- 但 `upstream/main` 里 **完全没有** `/v1/uploads`、`parse/jobs` 之类 4.x 契约的实现（grep 命中 0）
+  ⇒ **「拉上游」拿不到 4.x 支持**；上游的 MinerU 引擎永远只认 `/file_parse`
+
+### 8.5 超时不构成障碍
+
+`mineru_converter.go:25` 的 `mineruTimeout = 1000 * time.Second`（≈16.7 分钟）
+⇒ 一个**同步阻塞式**的适配器（内部轮询 `/v1` job 直到完成再返回）完全可行。
+
+### 8.6 可选方案与代价
+
+| 方案 | 做法 | 代价 | 合规 |
+|---|---|---|---|
+| **A（推荐）110 侧契约适配器** | 在 110 上新增一个小服务：暴露 `POST /file_parse`（+ `GET /docs` 供探测），内部转调 `/v1/*` 五步异步 API，再把结果映射成 `{"results":{stem:{md_content,images}}}` | 约 200 行 Python + 一个容器/端口；多一跳 | ✅ **不动 WeKnora 官方代码**，符合 fork 铁律 §1 |
+| B 改 WeKnora Go 代码 | 在 `mineru_converter.go` 加 4.x 分支 | **修改官方文件** ⇒ 上游同步冲突 | ❌ 违反 AGENTS.md §1 |
+| C 换回旧版 MinerU 容器 | 跑提供 `/file_parse` 的 1.x/2.x MinerU | 退回旧模型；质量与显存优化全部重来 | ⚠️ 倒退 |
+| D 暂用 `paddleocr_vl` 引擎 | 该引擎契约是同步 `POST {endpoint}/layout-parsing`（`paddleocr_vl_converter.go:156`），WeKnora 原生支持 | 立即可用，但 PPSV3 容器已删（镜像保留，`up -d` 即恢复），实测占 ~4.2 GiB，**与 MinerU 不能共存** ⇒ 等于放弃 MinerU | ✅ 可作过渡 |
+
+### 8.7 一处会误导排障的命名（提醒后来者）
+
+失败在知识库任务里被标成 **`DOCREADER_PARSE_FAILED` / `name: "docreader"` / `stage: "docreader"`**，
+但实际执行的是 **Go 原生的 `mineru` 引擎**（日志已证），**没走 docreader 服务**
+（docreader 容器近 1 小时日志为空）。
+
+⇒ 该错误码是「文档读取阶段」的**通用标签**，别据此去查 docreader 侧。
