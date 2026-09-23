@@ -275,6 +275,12 @@ Web UI 同为 `standard`）⇒ **不传 tier 就拉起 vLLM，且加载后不自
 ⚠️ **能力代价**：相比 VLM 档，**表格序号会漏识别**、**不还原中英数之间的空格**；
 正文与关键数字一致（目前仅 1 份样本验证）。
 
+⇒ **若下游需要表格的「结构化语义」**（合并单元格 rowspan、表头与数据关联），
+应恢复 VLM 档 —— 官方四档：`flash` 极速 / `basic` 基础 / `standard` 标准 / `advanced` 高级，
+**VLM 只在 `standard`(high) / `advanced`(xhigh) 加载**（`pipeline.py`：
+`if effort in {"high","xhigh"}: get_vlm_predictor(...)`）。恢复方法见 110 服务仓
+`my-docs/30-测试报告/04-…` 与 `01-现状与运维/01-服务运行现状.md` 的「VLM 档多出的能力」表。
+
 **3. 显存要按峰值算（且峰值不是「KV cache 增长」）**
 
 静态 7020 MiB，38 页文档解析中冲到 **8722 MiB** ⇒ 估余量必须按峰值。
