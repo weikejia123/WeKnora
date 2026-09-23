@@ -237,7 +237,7 @@ PP-OCRv6 单图 OCR 服务做 OCR。
 | 要看什么 | 去哪 |
 |---|---|
 | 服务实现 / 设计 / 运维与坑（**权威**） | `110:/mnt/docker-data/docker-deploy/pp-structure-v3/` → `my-docs/` |
-| ★ **同机新服务 MinerU 4.0.6**（`36743`） | `MinerU-接入与运维（南宁110）.md`（本目录） |
+| ★ **同机新服务 MinerU 4.0.6**（`36743` API + `36744` Web UI） | `MinerU-接入与运维（南宁110）.md`（本目录） |
 | 为什么选它（选型依据） | `WeKnora-扫描件PDF解析质量对比与选型.md` |
 | 解析引擎的通用机制（引擎列表从哪来 / 能否配 endpoint） | `my-docs/04-功能机制解析/WeKnora-解析引擎接入机制.md` |
 | 已搁置的 docreader 路径 | `WeKnora-docreader接入PP-OCRv6方案.md` |

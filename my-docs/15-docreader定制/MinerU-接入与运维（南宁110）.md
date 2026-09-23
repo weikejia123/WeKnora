@@ -1,6 +1,6 @@
 # MinerU 4.0.6 接入与运维（南宁 110）
 
-> ★★ **当前状态：服务已跑通，但尚未接入 WeKnora**（见 §四）。
+> ★★ **当前状态：服务已跑通（含 Web UI），但尚未接入 WeKnora**（见 §五）。
 > 与此同时 **PP-StructureV3 已停止**（见同目录 `PP-StructureV3-接入与运维（南宁110）.md` §七）
 > ⇒ **目前 WeKnora 的 `paddleocr_vl` 引擎实际不可用**（正式库不受影响，它们用 `anydoc`）。
 >
@@ -8,7 +8,7 @@
 > 与 WeKnora 现有 `paddleocr_vl` 引擎期望的 PPSV3 同步 `/layout-parsing` **不兼容**。
 >
 > 本文档管 **WeKnora 侧怎么看它、能不能用、要注意什么**。
-> 服务本身的实现与运维记录在 **110 上的独立仓库**（见 §六）。
+> 服务本身的实现与运维记录在 **110 上的独立仓库**（见 §七）。
 
 ---
 
@@ -18,6 +18,7 @@
 |---|---|
 | 服务地址 | `http://10.168.1.110:36743` |
 | 健康检查 | `GET /v1/health` ⇒ `status / version / features` |
+| **Web UI** | **`http://10.168.1.110:36744`**（Gradio，**不占显存**，见 §四） |
 | 容器 / 镜像 | `mineru-api` / `mineru:4.0.6`（compose project `mineru`） |
 | 版本 | `4.0.6` |
 | 二开分支 | `wkj-dev`（基点 = upstream master `48a92548`） |
@@ -105,7 +106,44 @@ def set_default_gpu_memory_utilization(backend="vllm") -> float:
 
 ---
 
-## 四、★ 接入 WeKnora：三条路径（**尚未决策**）
+## 四、Web UI（Gradio）—— 唯一能肉眼核对解析效果的入口
+
+服务**自带一套 Gradio 界面**（官方 `docker/compose.yaml` 的 `webui` profile），已启用：
+
+```
+http://10.168.1.110:36744
+```
+
+| 项 | 值 |
+|---|---|
+| 容器 | `mineru-webui`（宿主 **36744** → 容器 7860；`0.0.0.0`，局域网可达） |
+| 实现 | Gradio **6.28.0**（78 组件 / 51 交互依赖） |
+| **显存** | **0** —— 它是 api 服务的**纯 HTTP 客户端**，容器**未挂 GPU 设备** |
+| 能做什么 | 上传 PDF / 图片 → 选 `tier` → 看 markdown 与结构化结果、页面预览；产物落 110 的 `mineru/output/webui/` |
+| 启停 | 110 的 `mineru/` 仓库下 `./my-scripts/start-ui.sh` / `stop-ui.sh` |
+
+**用途**：这是目前**唯一能肉眼核对解析质量**的入口 —— 拿同一份扫描件分别过 MinerU 与 PPSV3，
+在界面上直接看表格有没有散、公式有没有崩，不必写脚本比对 markdown。
+
+### ⚠️ 坑：官方默认配置在这张卡上会 OOM
+
+官方 webui **默认自己起一个 API 后端**（源码 `mineru/kit/gradio/app.py:1068`：
+未传 `--api-url` 时执行 `ManagedLocalApiServer(...).start()`）
+⇒ 单卡上会**再拉起一份 vLLM 引擎**（≈6 GiB），与 api 的 6.1 GiB 合计 ≈13.8 GiB > 12 GiB。
+
+⇒ 我们的编排显式传了 `--api-url http://mineru-api:8000` 复用已有 api 服务，
+并**不给它 GPU 设备**（显存增量实测为 **0**）。改这个参数前务必核对显存。
+
+> 运维手感上的第二个坑：webui 在 `profiles: ["webui"]` 下，
+> 而 `docker compose down` **只作用于当前激活 profile 的服务** ⇒ 不带 profile 的 `down`
+> 会留下「api 已删、UI 仍在跑」的**半死状态**（页面能开、一提交就报错）。
+> 110 的 `my-scripts/stop.sh` 已修（改为带 `--profile webui`）。
+
+> 冷启动：整机重启后首次解析含引擎加载，约 **70 s**；热态 3 页文档 3~7 s。
+
+---
+
+## 五、★ 接入 WeKnora：三条路径（**尚未决策**）
 
 WeKnora 的 `paddleocr_vl` 引擎读的是 **PPSV3 契约**
 （`result.layoutParsingResults[].markdown.text`），与 MinerU 的异步 job 契约不兼容
@@ -127,7 +165,7 @@ WeKnora 的 `paddleocr_vl` 引擎读的是 **PPSV3 契约**
 
 ---
 
-## 五、注意事项与坑
+## 六、注意事项与坑
 
 **1. 服务形态是异步 job，不是"发一个 POST 就回结果"**
 
@@ -149,7 +187,7 @@ WeKnora 的 `paddleocr_vl` 引擎读的是 **PPSV3 契约**
 
 ---
 
-## 六、权威记录在哪
+## 七、权威记录在哪
 
 | 要看什么 | 去哪 |
 |---|---|
