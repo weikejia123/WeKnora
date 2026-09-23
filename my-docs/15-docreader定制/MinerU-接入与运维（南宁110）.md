@@ -261,9 +261,22 @@ Web UI 同为 `standard`）⇒ **不传 tier 就拉起 vLLM，且加载后不自
 
 静态 7020 MiB，38 页文档解析中冲到 **8722 MiB** ⇒ 估余量必须按峰值。
 ⚠️ 但那个增长**不是** KV cache：vLLM 的 KV cache 在**启动期按 `gpu_memory_utilization`
-一次预分配、运行期不增长**（启动日志 `Available KV cache memory: 2.15 GiB` 即最终值），
-增长来自激活/中间张量与图像预处理。
+一次预分配、运行期不增长**（启动日志 `Available KV cache memory: 2.15 GiB` 即最终值）。
 另：**仅 `standard` / `advanced` 档才有这笔 vLLM 开销**（见上条）。
+
+★★ **那增量到底在哪（2026-09-23 按进程实测，38 页）**：`VLLM::EngineCore` **恒定
+6108 MiB、纹丝不动**；增量**全在 API 主进程**（484 → **1484** MiB，+1000）
+—— 是 `MINERU_MODEL_SMALL_BACKEND=torch` 的**版面 / 表格 / 公式小模型在 GPU 上跑**的开销。
+
+⇒ **两条可操作结论**：
+- 调 `--vlm-max-concurrency` 对峰值显存**无效**（vLLM 侧本就固定，预分配量用得满不满而已）
+- 要把它**挪到内存**：改 **`MINERU_MODEL_SMALL_BACKEND=onnx`** —— 本容器
+  `onnxruntime.get_available_providers()` 只有 `[Azure, CPU]`（**无 CUDA**）⇒ 小模型转 CPU、
+  那 +1000 MiB 显存增量归零（代价：CPU 推理变慢，未实测）。
+  ⚠️ PP-OCRv6 本来就走 onnxruntime/CPU，不受此开关影响。
+
+⚠️ **口径（易算错）**：`nvidia-smi` 的 `memory.total` 报 12288 MiB，但 `used + free` 实测只
+**11911 MiB**（差 377 为驱动保留）⇒ **算余量要用 `used + free`**，别用 total 减。
 
 **4. 与 PPSV3 无法共存（单卡 12 GB）**
 
