@@ -44,7 +44,6 @@ RUN if [ -n "$RUSTUP_DIST_SERVER_ARG" ]; then \
     fi && \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
 COPY scripts/build_browserskill.sh scripts/browserskill-release.json ./scripts/
-COPY patches/browserskill ./patches/browserskill
 ARG TARGETOS
 ARG TARGETARCH
 RUN if [ -n "$GH_PROXY" ]; then \
