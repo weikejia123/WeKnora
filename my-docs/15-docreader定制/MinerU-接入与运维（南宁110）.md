@@ -269,10 +269,15 @@ Web UI 同为 `standard`）⇒ **不传 tier 就拉起 vLLM，且加载后不自
 —— 是 `MINERU_MODEL_SMALL_BACKEND=torch` 的**版面 / 表格 / 公式小模型在 GPU 上跑**的开销。
 
 ⇒ **两条可操作结论**：
-- 调 `--vlm-max-concurrency` 对峰值显存**无效**（vLLM 侧本就固定，预分配量用得满不满而已）
+- 调 `--vlm-max-concurrency` 对峰值显存**无效**（vLLM 侧有固定上限、不随页数增长）
 - 要把它**挪到内存**：改 **`MINERU_MODEL_SMALL_BACKEND=onnx`** —— 本容器
-  `onnxruntime.get_available_providers()` 只有 `[Azure, CPU]`（**无 CUDA**）⇒ 小模型转 CPU、
-  那 +1000 MiB 显存增量归零（代价：CPU 推理变慢，未实测）。
+  `onnxruntime.get_available_providers()` 只有 `[Azure, CPU]`（**无 CUDA**）⇒ 小模型转 CPU。
+  ★ **已实测（2026-09-23，详见 110 服务仓 `my-docs/30-测试报告/`）**：
+  `python3` 显存**归零**、MinerU 侧峰值 **7592 → 6392 MiB（6.24 GB，达成 ≤7G ✅）**、
+  38 页产物 **106995 字节逐字节一致**；代价 **38 页 18 s → 75 s（×4.2）**
+  （单页无变化 —— CPU 小模型是**逐页**开销）。
+  ⚠️ 前置：onnx 小模型是**独立仓库**（819 MB），镜像未烘焙，需下载 + 挂载；
+  **当前 110 服务即运行在 onnx 试验态（待定去留）**。
   ⚠️ PP-OCRv6 本来就走 onnxruntime/CPU，不受此开关影响。
 
 ⚠️ **口径（易算错）**：`nvidia-smi` 的 `memory.total` 报 12288 MiB，但 `used + free` 实测只
