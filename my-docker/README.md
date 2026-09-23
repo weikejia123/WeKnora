@@ -161,7 +161,7 @@ diff -r frontend my-frontend                     # 复查差异面仍只有你�
 排查清单、以及 2026-09-21 由 `tls` 正名为 `nginx` 的迁移记录。
 
 一句话：BrowserSkill 配对要求非 localhost 必须 `wss`
-（`internal/browserskill/manager.go:178-190`），所以浏览器必须用 `https://` 打开页面 ——
+（`internal/browserskill/manager.go` 的 `pairingEndpoint()`），所以浏览器必须用 `https://` 打开页面 ——
 接入层就是为此存在，**两个前端共用同一张自签证书**。
 
 ## 七、与上游同步

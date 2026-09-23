@@ -34,7 +34,7 @@
 ### 1.1 背景（一个容易踩的点）
 
 **从 v0.6 起，创建空间不再自动发放 API Key。** 所以你不能指望"建个空间就有 key 用"，必须显式创建。
-（`docs/api/tenant.md:113`）
+（`website-docs/04-api/02-api-tenant.md`）
 
 ### 1.2 方式 A：界面创建（最省事）
 
@@ -110,7 +110,7 @@ Body:
 }
 ```
 
-**字段说明**（完整表见 `docs/api/knowledge-base.md`，结构体在 `internal/types/knowledgebase.go:59`）：
+**字段说明**（完整表见 `website-docs/04-api/02-api-knowledge.md`，结构体在 `internal/types/knowledgebase.go:59`）：
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
@@ -159,7 +159,7 @@ Body:
 | `title` | 否 | 自定义标题 |
 | `enable_multimodel` | 否 | 是否启用多模态处理 |
 | `tag_ids` | 否 | 打标签 |
-| `process_config` | 否 | 覆盖解析/分块配置（见 `docs/api/knowledge.md:64`） |
+| `process_config` | 否 | 覆盖解析/分块配置（见 `website-docs/04-api/02-api-knowledge.md`） |
 
 > **这就是你在页面上点的那一步对应的接口**——同一个 handler。
 > 注意行为与页面一致：**只抓这一个 URL，不跟随页面内的链接**（`docreader/parser/web_parser.py:193-236`）。
@@ -256,9 +256,9 @@ curl -s "$BASE/knowledge-bases/$KB_ID/knowledge" -H "X-API-Key: $KEY"
 
 | 内容 | 位置 |
 |---|---|
-| 知识库 API 文档 | `docs/api/knowledge-base.md` |
-| 知识（文档）API 文档 | `docs/api/knowledge.md` |
-| 空间与 API Key API | `docs/api/tenant.md:18-22`、`:113` |
+| 知识库 API 文档 | `website-docs/04-api/02-api-knowledge.md` |
+| 知识（文档）API 文档 | `website-docs/04-api/02-api-knowledge.md` |
+| 空间与 API Key API | `website-docs/04-api/02-api-tenant.md` |
 | Swagger 定义 | `docs/swagger.json`、`docs/swagger.yaml` |
 | 路由源码 | `internal/router/routes_knowledge.go`、`routes_auth_tenant.go` |
 | API Key 类型与能力 | `internal/types/tenant_api_key.go:18-125` |

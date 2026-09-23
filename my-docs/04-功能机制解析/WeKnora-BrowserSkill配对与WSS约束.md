@@ -10,7 +10,7 @@
 
 ## 二、根因（代码级）
 
-判定逻辑在 `internal/browserskill/manager.go:178-190`：
+判定逻辑在 `internal/browserskill/manager.go` 的 `pairingEndpoint()`：
 
 ```go
 func pairingEndpoint(raw string) (string, error) {
@@ -33,7 +33,7 @@ func pairingEndpoint(raw string) (string, error) {
 1. 前端 `frontend/src/views/settings/BrowserConnectionSettings.vue:171` 发起配对时，
    把**页面 origin** 原样交给后端：
    `POST /api/v1/sessions/:id/local-browser` → `{ action: 'pair', origin: window.location.origin }`
-2. 后端在 `BROWSERSKILL_PUBLIC_URL` **为空**时用 origin 推导（`manager.go:196-215`）：
+2. 后端在 `BROWSERSKILL_PUBLIC_URL` **为空**时用 origin 推导（`manager.go` 的 `pairingURL()`）：
    `https` → `wss`，`http` → `ws`
 3. 以 `http://10.168.1.111:41200` 访问 ⇒ 推导出 `ws://10.168.1.111:41200/api/v1/local-browser/extension`
 4. hostname 是 `10.168.1.111`（**不是 localhost**）、scheme 是 `ws` ⇒ **被拒**
@@ -42,8 +42,8 @@ func pairingEndpoint(raw string) (string, error) {
 
 | 位置 | 原文 |
 |---|---|
-| `.env.example:779` | 「可选覆盖：仅在网关使用独立域名/路径等特殊部署时设置；**远程部署必须使用 WSS（包括内网）**。」 |
-| `docs/browser-skill-production.md:88` | 「**WSS 可以使用企业 CA，无需公网**；**远程明文 WS 不受支持**。」 |
+| `.env.example:785` | 「可选覆盖：仅在网关使用独立域名/路径等特殊部署时设置；**远程部署必须使用 WSS（包括内网）**。」 |
+| `website-docs/05-clients/09-local-browser.md` | 「**WSS 可以使用企业 CA，无需公网**；**远程明文 WS 不受支持**。」 |
 
 ⇒ 上游明确把"内网明文 ws"排除在外，并指出内网可行路径是**企业 CA / 自签证书**。
 
@@ -105,7 +105,7 @@ func pairingEndpoint(raw string) (string, error) {
 | `BROWSERSKILL_MAX_CONNECTIONS` | 单实例共享 daemon 最多保留的配对记录数（默认 32） |
 | `BROWSERSKILL_INTERNAL_URL` / `BROWSERSKILL_CLUSTER_SECRET` | 仅多副本场景：节点直连地址 / 共享密钥 |
 
-配对链接形态（`docs/browser-skill-production.md:11-23`）：
+配对链接形态（`website-docs/05-clients/09-local-browser.md`）：
 **WSS 地址 + fragment 携带配对令牌** → 扩展先走 HTTPS `/authorize` 激活 → 之后长连 WSS，
 设备令牌放在 `Sec-WebSocket-Protocol` 子协议里。令牌只以 **sha256 哈希**落库
 （`internal/browserskill/authorization.go:46`）。
@@ -180,7 +180,7 @@ return browserToolDescription +
 ```
 
 它在**工具描述**里，不在系统提示词正文里，也不在用户可编辑的 Agent 模板里
-（`docs/agent-prompt-assembly.md:32-40`）。
+（`website-docs/06-development/05-agent-prompts.md`）。
 
 ### 默认值
 

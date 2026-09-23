@@ -30,14 +30,14 @@
 ## 二、它解决什么问题
 
 BrowserSkill 配对时，后端要求**非 localhost 必须 `wss`**
-（`internal/browserskill/manager.go:178-190`）。以 `http://<内网IP>:41200` 访问时，
+（`internal/browserskill/manager.go` 的 `pairingEndpoint()`）。以 `http://<内网IP>:41200` 访问时，
 前端把页面 origin 交给后端推导（`http`→`ws`），因 hostname 不是 localhost 而被拒，
 页面报 **`BrowserSkill public URL requires WSS`**。
 
 上游立场（原文）：
 - `.env.example` 的 `BROWSERSKILL_PUBLIC_URL` 段：「远程部署必须使用 WSS（**包括内网**）」
   （用段名定位而非行号 —— 行号会随上游插行静默失真，实测该引用已从 779 漂到 785）
-- `docs/browser-skill-production.md:88`：「WSS 可以使用**企业 CA，无需公网**；远程明文 WS 不受支持」
+- `website-docs/05-clients/09-local-browser.md`：「WSS 可以使用**企业 CA，无需公网**；远程明文 WS 不受支持」
 
 本层让页面以 `https://` 打开、配对链接自然推导为 `wss://`。**两个前端都受益**。
 

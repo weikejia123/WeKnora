@@ -195,7 +195,7 @@ Dify / FastGPT / MaxKB / RAGFlow 主体都是 Python。WeKnora 是 Go。实际�
 >
 > 对你而言的实际含义：**只要你的内网提供的是 OpenAI 兼容接口，你几乎不用改代码**。需要改代码的场景是"要塞一个私有的国产向量库/私有协议模型"，那时成本是"写一个 Go 文件 + 重新构建镜像"。
 
-**官方扩展文档**（是真的有，不是摆设）：`docs/使用其他向量数据库.md`、`docs/添加新的网络搜索引擎.md`、`docs/数据源导入开发文档.md`、`docs/IM集成开发文档.md`、`internal/datasource/CONNECTOR_IMPLEMENTATION_GUIDE.md`、`docs/BUILTIN_MODELS.md`。
+**官方扩展文档**（是真的有，不是摆设）：`website-docs/03-features/05-retrieval-engines.md`、`website-docs/03-features/11-web-search.md`、`website-docs/03-features/10-datasource.md`、`website-docs/03-features/12-im-integration.md`、`internal/datasource/CONNECTOR_IMPLEMENTATION_GUIDE.md`、`website-docs/03-features/06-models.md`。
 **缺口**：解析引擎、存储后端、模型厂商这三类**没有**官方扩展文档。
 
 ### 3.2 多领域隔离：靠 Tenant（空间）
@@ -353,7 +353,7 @@ gunzip -c weknora-images.tar.gz | docker load
 
 | 位置 | 行为 |
 |---|---|
-| `docker/Dockerfile.app:122` | `curl -LsSf https://astral.sh/uv/install.sh` |
+| `docker/Dockerfile.app:121` | `curl -LsSf https://astral.sh/uv/install.sh` |
 | `docker/Dockerfile.docreader:60` | 下载 `protoc-3.19.4-linux-*.zip`（**有离线兜底**：若 `packages/` 下有本地包则跳过下载） |
 | `docker/Dockerfile.docreader` | `python -m playwright install webkit`（需下载浏览器内核） |
 | `scripts/build_browserskill.sh:35` | `git clone https://github.com/Tencent/BrowserSkill.git` |

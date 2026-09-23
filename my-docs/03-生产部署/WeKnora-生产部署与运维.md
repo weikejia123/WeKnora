@@ -339,9 +339,9 @@ ssh nanning-111 "docker exec WeKnora-docreader sh -c \
 > 想彻底归位：`docker compose ... up -d --force-recreate docreader`（会短暂中断解析服务）。
 
 生效链路（改之前只有这一条路能反推，成本很高）：
-`my-docker` 的 build.args → `Dockerfile.app:59-61` builder 阶段的 `ENV`
-→ `Makefile:256-259` 从环境变量取 `COMMIT_ID`
-→ `Makefile:262` 用 `ldflags -X ...handler.CommitID` 写进二进制
+`my-docker` 的 build.args → `Dockerfile.app:58-61` builder 阶段的 `ENV`
+→ `Makefile:275` 从环境变量取 `COMMIT_ID`
+→ `Makefile:281` 用 `ldflags -X ...handler.CommitID` 写进二进制
 → `GET /api/v1/system/info` 的 `commit_id`。
 
 > 官方 compose 不传这几个参数 ⇒ 二进制里恒为 `unknown`，只能靠**日志行号**反推
@@ -364,7 +364,7 @@ ssh nanning-111 "docker exec WeKnora-docreader sh -c \
 > 想跳过可设 `WITH_ANYDOC=0`（省几分钟和约 1GB 层），但会失去进程内解析能力。
 
 **根因**：官方 `docker-compose.yml` 的 `app.build.args` 只传了 `APK_MIRROR_ARG` 与 `WITH_ANYDOC`，
-**没有 wire `GOPROXY_ARG`**（`Dockerfile.app:23` 声明了该 ARG 却没传）；`NPM_REGISTRY` 与 `APT_MIRROR` 同理
+**没有 wire `GOPROXY_ARG`**（`Dockerfile.app:22` 声明了该 ARG 却没传）；`NPM_REGISTRY` 与 `APT_MIRROR` 同理
 （都声明了、默认空 ⇒ 回落国外源）。仓库**无 `vendor/`**，所以 Go 代理是硬需求。
 
 **解法**：不改官方 compose，改为在 `my-docker/docker-compose.overlay.yml` 的 build.args 里补默认值
@@ -441,7 +441,7 @@ ls /var/lib/apt/lists/ | grep -c _Packages    # 0 = 实际什么都没拿到
 而 `sed` 只替换**主机名**、不改 scheme，所以换出来的 URI 仍是 `http://…` —— apt 会跟随 302 去访问 https，
 **slim 基镜像没有 CA 证书 ⇒ 握手失败 ⇒ 索引全被忽略**（且 `apt-get update` 仍返回 0，见坑 2）。
 
-上游在 **final 阶段**已经处理对了 —— `Dockerfile.app:161` 的注释就写着
+上游在 **final 阶段**已经处理对了 —— `Dockerfile.app:160` 的注释就写着
 “First, install ca-certificates without mirror to ensure HTTPS works”：**先用官方源装 CA，再换源**。
 `browserskill` 阶段原先缺这一步（属上游疏漏），2026-09-21 已按**同一模式**补齐。
 
@@ -718,7 +718,7 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 ### 5.6 111 的接入层（nginx，2026-09-21 新增并改版）
 
 **用途**：让浏览器以 `https://` + `wss://` 访问**两个前端**。BrowserSkill 配对**必须** wss
-（`internal/browserskill/manager.go:178-190`；上游 `.env.example:779`「远程部署必须使用
+（`internal/browserskill/manager.go` 的 `pairingEndpoint()`；上游 `.env.example:785`「远程部署必须使用
 WSS（包括内网）」）。机制与排查详见 `my-docs/04-功能机制解析/WeKnora-BrowserSkill配对与WSS约束.md`。
 
 | 项 | 值 |

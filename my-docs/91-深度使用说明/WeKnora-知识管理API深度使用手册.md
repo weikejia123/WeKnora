@@ -715,9 +715,9 @@ curl -sS --noproxy '*' -H "X-API-Key: $WK_KEY" -H 'Content-Type: application/jso
 
 | 内容 | 位置 |
 |---|---|
-| 知识 API（含 folder 章节 336–420 行） | `docs/api/knowledge.md` |
-| 知识库 API | `docs/api/knowledge-base.md` |
-| 空间与 API Key | `docs/api/tenant.md` |
+| 知识 API | `website-docs/04-api/02-api-knowledge.md` |
+| 知识库 API | `website-docs/04-api/02-api-knowledge.md` |
+| 空间与 API Key | `website-docs/04-api/02-api-tenant.md` |
 | Swagger | `docs/swagger.json` / `docs/swagger.yaml` |
 | 路由定义 | `internal/router/routes_knowledge.go`、`routes_chat.go:148` |
 | 目录模型与上限 | `internal/types/knowledge_folder.go` |
