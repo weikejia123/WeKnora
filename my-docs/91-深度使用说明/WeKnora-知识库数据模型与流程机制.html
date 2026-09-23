@@ -266,6 +266,36 @@ footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font
 <h3>第三层：分块（Chunk）——下面第 5 章单独讲</h3>
 <p>它是检索的最小单元，字段最密，值得单独一节。</p>
 
+<p><b>★ 但先要建立一个概念：文档与分块不是"重要程度"的排序，而是两个不同角色。</b>
+它们是<b>不可变来源</b>与<b>可变有效内容</b>的关系——类似 git 里"blob / 提交"与"工作区文件"的关系，
+而非"原文 vs 它的副本"。</p>
+
+<table>
+<tr><th>角色</th><th>载体</th><th>是否可变</th><th>谁在消费它</th></tr>
+<tr><td><b>不可变来源</b>（source of record）</td>
+    <td>文档原文：<code>file</code> 类的原始文件（<code>file_path</code> 指向对象存储）；
+        <code>manual</code> 类的正文存在 <code>metadata.manual.content</code></td>
+    <td><b>不可变</b>（上传后不再改）</td>
+    <td>只有<b>重解析</b>——重新分块、换分块策略、换解析引擎、换向量模型时都要回到它</td></tr>
+<tr><td><b>可变有效内容</b>（effective content）</td>
+    <td>分块的 <code>content</code>；原始解析快照在 <code>source_content</code>（不可变，仅用于回滚）</td>
+    <td><b>可编辑</b>（<code>content_revision</code> 每次编辑/回滚递增）</td>
+    <td>检索、摘要、图谱抽取、Wiki 合成——<b>全部派生物都从它派生</b></td></tr>
+</table>
+
+<p><b>由此得出两条容易反直觉的结论：</b></p>
+<p>① <b>派生物跟着手改走，文档原文不跟。</b>
+摘要就是明证：它<b>不是</b>读原文，而是把分块按 <code>ChunkIndex</code> 重新拼回全文再交给模型
+（<code>knowledge_process.go</code> 的 <code>sortChunksForSummary</code> / <code>getSummary</code>）。
+所以改了分块，摘要、向量、图谱、Wiki 都会跟着变，而文档原文永远停在入库那一刻。</p>
+<p>② <b>手改会让"字符位置"这类定位信息失效，而系统是知道的。</b>
+分块上的 <code>start_at</code> / <code>end_at</code> 是<b>原文</b>里的字符区间，手改一旦改变长度就对不上了。
+源码对此有三处显式处理：<code>sortChunksForSummary</code> 的注释写明"解析器偏移在手改之后不再权威，
+改用 <code>ChunkIndex</code> 排序"；<code>merge_overlap.go</code> 的 <code>chunkTrusted()</code> 用
+<code>runeLen(content) == end_at - start_at</code> 判断偏移是否还可信；<code>merge.go</code> 里
+直接注明"不使用<b>可被编辑的</b> StartAt/EndAt 坐标"。⇒ <b>定位精度从"字符区间级"降为"分块级"</b>，
+这正是不变量被编辑打破后的必然降级，不是 bug。</p>
+
 <h3>第四层：三种派生物</h3>
 <p>向量索引、图谱、Wiki 都是<b>从分块派生出来的</b>，有各自的存储和生命周期：</p>
 <table>
@@ -762,7 +792,14 @@ footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font
 
 <div class="card blue">
 <h4 style="margin-top:0">Q3：改了分块内容，检索结果会变吗？</h4>
-<p style="margin-bottom:0">会，但不是立即。编辑后 <code>index_status</code> 会变成处理中，需要重新索引。<code>source_content</code> 始终保留原始解析结果，可随时回滚。</p>
+<p>会，但不是立即。编辑后 <code>index_status</code> 会变成处理中，需要重新索引。<code>source_content</code> 保留原始解析结果，可随时回滚（<code>POST /chunks/:knowledge_id/:id/revert</code>，配合 <code>content_revision</code> 做乐观并发——编辑时传 <code>expected_revision</code>，版本不符即拒绝，防止覆盖别人的改动）。</p>
+<p style="margin-bottom:0">⚠️ 但有一条<b>反直觉的边界</b>：<b>「重新解析」会清空分块，手改不保留</b>。
+重解析走的是"回到文档原文重新分块"——<code>processChunks</code> 开头<b>无条件</b>
+<code>DeleteChunksByKnowledgeID</code>（注释写明是"幂等性处理，避免重复数据"）；
+而手改只落在分块上，<b>全代码库没有把分块回写文档的路径</b>。
+⇒ 手改与"重新解析/换分块策略"这两件事<b>当前不可兼得</b>。
+界面只给一般性警告（「该操作会清理现有分块并重新解析」），<b>不区分是否手改过</b>——
+所以动手重解析之前，先确认这份文档里有没有你手改过的分块。</p>
 </div>
 
 <div class="card blue">
