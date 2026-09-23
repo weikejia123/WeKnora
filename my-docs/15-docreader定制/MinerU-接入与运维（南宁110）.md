@@ -61,7 +61,7 @@
 | MinerU 单独解析 38 页 | 8722 MiB | 3566 MiB |
 | embedding 驻留（无解析） | 10861 MiB | 1050 MiB |
 | **两者同时**（embedding 驻留 + 38 页解析） | **11861 MiB** | **50 MiB** ⚠️ |
-| 再加**并发** 8 次 embedding 请求 | 未再增长 | 50 MiB |
+| 再加 8 个 embedding 请求（**Ollama 侧排队串行**，非真并发） | 未再增长 | 50 MiB |
 
 - embedding 侧：`POST /api/embed`，**2560** 维；占 **4108 MiB**；冷加载 4.6 s、热态 0.15~0.31 s
 - 同时运行期间：解析产物 **106995 字符**（与单独跑一致）、embedding **8/8 返回 200**、`dmesg` 无 OOM
@@ -115,7 +115,7 @@ MinerU 建在**通用 vLLM 镜像**上（基底单独 32.9 GB），含完整 CUD
 
 ---
 
-## 三、★ 显存由 MinerU 自己接管，不是 vLLM 默认值
+## 三、★ 显存由 MinerU 自己接管 —— `0.5` 是「预算比例」，不是「占用比例」
 
 vLLM 默认 `gpu_memory_utilization=0.9`（12 GB 卡会先占 10.8 GB），**MinerU 不用它**。
 
@@ -123,13 +123,40 @@ vLLM 默认 `gpu_memory_utilization=0.9`（12 GB 卡会先占 10.8 GB），**Min
 
 ```python
 def set_default_gpu_memory_utilization(backend="vllm") -> float:
-    gpu_memory = get_vram(device)
+    gpu_memory = get_vram(device)                       # ← 卡的「总」显存
     if gpu_memory > 8:
         min_memory = 6                                  # >8GB 统一按 6GB 预算
         return max(round(min_memory / gpu_memory, 2), 0.1)
 ```
 
-12 GB 卡 ⇒ `6 / 12 = 0.5`。实测 EngineCore 5434 MiB 与该预算吻合。
+**「0.5」是什么**：MinerU 的策略是「不管卡多大，vLLM 只给 **6 GB** 预算」，
+`0.5` 只是这条策略在 12 GB 卡上**除出来的比值**（`6 / 12`）。卡越大比值越小
+（24 GB ⇒ 0.25），小到 **0.1** 为止。⇒ 它与「卡上还有谁在跑」**无关**，是无条件的 6 GB；
+**更不表示「MinerU 只用一半显存」**。
+
+**它管什么**：只决定 vLLM 切多少给 **KV cache**（＝**并发容量**），不决定单次解析的成败。
+
+2026-09-23 vLLM 启动日志（实测，可复现）：
+
+```
+--gpu-memory-utilization=0.5000 is equivalent to --gpu-memory-utilization=0.4842
+        without CUDA graph memory profiling     ← v0.21 默认开 CUDA graph profiling，名义值要打折
+Available KV cache memory: 2.15 GiB             ← 6 GB 预算里分给 KV cache 的只有 2.15 GiB
+GPU KV cache size: 187,568 tokens
+```
+
+⇒ 预算 6144 MiB 里：**KV cache 2.15 GiB + 权重约 2.16 GiB + 激活/CUDA graph/非 torch≈1.6 GiB**。
+实测 `VLLM::EngineCore` 进程 **6108 MiB**，与 6144 预算吻合。
+
+**并发上限 = `min(KV cache 容量, MinerU 自限 batch_size)`**。`set_default_batch_size()`
+（同文件 `:114`）按显存档位取 `≥16 GB → 8`、`≥8 GB → 4` ⇒ 本机为 **4**。
+`4 × 单序列长度 ≪ 187,568 tokens` ⇒ **KV cache 不是瓶颈，权重才是**。
+这也是「下调 `--gpu-memory-utilization` 主要压 KV cache、**不必然损失并发**」的依据
+（真实下限需实测：util 过低会让 vLLM 因 KV cache 不足而在启动期报错）。
+
+⚠️ **共卡陷阱**：`get_vram()` 取的是**整卡总显存**、**不减去**同机 Ollama 已占的 4108 MiB
+⇒ 两个进程**各算各的预算**。12 GB 卡上共存余量只剩 50 MiB，根因就在这里。
+
 可用 `--gpu-memory-utilization` 显式覆盖（**要往下压显存就改这里**）。
 
 ---
