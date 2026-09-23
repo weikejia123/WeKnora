@@ -98,7 +98,7 @@ step() { printf '\n%s──── %s ────%s\n' "$C_INFO" "$*" "$C_OFF"; 
 # 从本机 ~/.git-credentials 读取 110 Gitea 的凭据；不回显密码。
 read_local_cred() {
   local f="$HOME/.git-credentials"
-  [ -f "$f" ] || die "本机缺少 $f，无法获取 110 Gitea 凭据"
+  [ -f "$f" ] || die "本机缺少 ${f}，无法获取 110 Gitea 凭据"
   local line
   line=$(grep -- "$GITEA_CRED_KEY" "$f" 2>/dev/null | head -1 || true)
   [ -n "$line" ] || die "在 $f 中找不到 $GITEA_CRED_KEY 的凭据条目"
@@ -114,7 +114,7 @@ preflight_local() {
 
   local cur
   cur=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)
-  [ "$cur" = "$BRANCH" ] || die "当前分支为 $cur，但本脚本部署 $BRANCH；请先 git checkout $BRANCH"
+  [ "$cur" = "$BRANCH" ] || die "当前分支为 ${cur}，但本脚本部署 ${BRANCH}；请先 git checkout $BRANCH"
   ok "当前分支：$cur"
 
   if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
@@ -126,7 +126,7 @@ preflight_local() {
 preflight_remote() {
   step "111 远端前置检查"
   ssh -o ConnectTimeout=10 -o BatchMode=yes "$SSH_HOST" 'true' 2>/dev/null \
-    || die "无法免密 SSH 到 $SSH_HOST（检查 ~/.ssh/config）"
+    || die "无法免密 SSH 到 ${SSH_HOST}（检查 ~/.ssh/config）"
   ok "SSH 免密连通"
 
   ssh -o ConnectTimeout=10 "$SSH_HOST" '
@@ -140,8 +140,8 @@ preflight_remote() {
 
   # 叠加层与官方基底都必须在位（一个容器组由这两份文件共同定义）
   ssh "$SSH_HOST" "test -f '$REMOTE_DIR/$COMPOSE_OVERLAY_REL' && test -f '$REMOTE_DIR/$COMPOSE_BASE_REL'" 2>/dev/null \
-    || die "111 上缺少 $REMOTE_DIR/$COMPOSE_OVERLAY_REL（或官方基底）—— 先跑一次 sync_code"
-  ok "编排在位：$COMPOSE_BASE_REL（基底） + $COMPOSE_OVERLAY_REL（叠加）"
+    || die "111 上缺少 $REMOTE_DIR/${COMPOSE_OVERLAY_REL}（或官方基底）—— 先跑一次 sync_code"
+  ok "编排在位：${COMPOSE_BASE_REL}（基底） + ${COMPOSE_OVERLAY_REL}（叠加）"
 }
 
 # ------------------------------------------------------------------ 代码同步
@@ -269,7 +269,7 @@ REMOTE_ENV
 # ------------------------------------------------------------------ 容器编排
 compose_up() {
   local mode="${1:-pull}"
-  step "④ 启动容器（模式：$mode）"
+  step "④ 启动容器（模式：${mode}）"
   ssh "$SSH_HOST" "DIR='$REMOTE_DIR' MODE='$mode' DC='$DC' ALLOW_OVERWRITE='${WKJ_ALLOW_PULL_OVERWRITE:-0}' bash -s" <<'REMOTE_UP'
 set -e
 cd "$DIR"
@@ -308,7 +308,7 @@ for _img in wechatopenai/weknora-app wechatopenai/weknora-ui wechatopenai/weknor
   _rec=$(awk -v k="$_img:$TAG" '$1==k {print $2; exit}' "$_marker" 2>/dev/null || true)
   if [ -n "$_rec" ] && [ "$_cur" = "$_rec" ]; then
     local_built=1
-    echo "  · 检测到本地构建镜像：$_img:$TAG（ID 与构建登记一致，属二开产物）"
+    echo "  · 检测到本地构建镜像：$_img:${TAG}（ID 与构建登记一致，属二开产物）"
   fi
 done
 
@@ -423,7 +423,7 @@ _ensure_build_artifacts() {
       continue
     fi
 
-    echo "    ↓ 下载 $rel（本网络较慢，可能需 1-2 分钟）"
+    echo "    ↓ 下载 ${rel}（本网络较慢，可能需 1-2 分钟）"
     curl -fL --retry 6 --retry-all-errors --retry-delay 3 -C - --max-time 900 -o "$rel" "$url" \
       || { echo "    ✘ 下载失败：$url"; exit 1; }
 
@@ -726,7 +726,7 @@ health_check() {
         warn "searxng 返回 200 但**结果为空** ⇒ 多为引擎不可达（看：$DC logs searxng）"
       fi
     else
-      warn "searxng 在跑，但搜索接口返回 HTTP $sx_code（看日志：$DC logs searxng）"
+      warn "searxng 在跑，但搜索接口返回 HTTP ${sx_code}（看日志：$DC logs searxng）"
     fi
   else
     warn "searxng 未运行（状态 ${sx_state}）⇒ 网络搜索 Provider 不可用"

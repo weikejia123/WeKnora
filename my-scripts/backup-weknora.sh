@@ -58,7 +58,7 @@ for arg in "$@"; do
         --dry-run) DRY_RUN=1 ;;
         --status)  MODE="status" ;;
         --help|-h) usage; exit 0 ;;
-        *) die "未知参数：$arg（用 --help 查看用法）" ;;
+        *) die "未知参数：${arg}（用 --help 查看用法）" ;;
     esac
 done
 
@@ -66,7 +66,7 @@ done
 if [ "$MODE" = "status" ]; then
     if [ -f "$BACKUP_ROOT/.last-success" ]; then
         echo "最近一次成功备份：$(cat "$BACKUP_ROOT/.last-success")"
-        echo "现有快照（保留上限 $KEEP）："
+        echo "现有快照（保留上限 ${KEEP}）："
         find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name '20*' 2>/dev/null \
             | sort | sed 's|^|  |'
     else
@@ -96,7 +96,7 @@ fi
 TS="$(date '+%Y%m%d-%H%M%S')"
 DEST="$BACKUP_ROOT/$TS"
 
-log "=== 备份开始（TS=$TS，保留 $KEEP 份）==="
+log "=== 备份开始（TS=${TS}，保留 $KEEP 份）==="
 [ "$DRY_RUN" = "1" ] && log "（dry-run：不会真正写盘）"
 
 # ── 1. 前置检查（失败就退出，不要产生半个备份）────────────────────────
@@ -124,9 +124,9 @@ DB_USER="$(env_get DB_USER)"; DB_NAME="$(env_get DB_NAME)"; DB_PW="$(env_get DB_
 
 if [ "$DRY_RUN" = "1" ]; then
     log "[dry-run] 将创建 $DEST"
-    log "[dry-run] pg_dump -Fc（$DB_NAME）→ $DEST/db.dump"
+    log "[dry-run] pg_dump -Fc（${DB_NAME}）→ $DEST/db.dump"
     log "[dry-run] cp .env → $DEST/env.backup"
-    log "[dry-run] docker exec $APP_CONTAINER tar czf …（$DATA_FILES_MOUNT）→ $DEST/data-files.tar.gz"
+    log "[dry-run] docker exec $APP_CONTAINER tar czf …（${DATA_FILES_MOUNT}）→ $DEST/data-files.tar.gz"
     log "[dry-run] 写 meta.txt（迁移版本 / 代码提交 / 体积）"
     exit 0
 fi
@@ -134,7 +134,7 @@ fi
 mkdir -p "$DEST"
 
 # ── 2. 数据库（全量，-Fc：内置压缩 + 支持选择性恢复）──────────────────
-log "1/5 pg_dump（$DB_NAME）…"
+log "1/5 pg_dump（${DB_NAME}）…"
 docker exec -e PGPASSWORD="$DB_PW" "$PG_CONTAINER" \
     pg_dump -U "$DB_USER" -d "$DB_NAME" -Fc > "$DEST/db.dump"
 [ -s "$DEST/db.dump" ] || die "db.dump 为空"
@@ -149,7 +149,7 @@ log "2/5 .env …"
 cp -p "$REPO_DIR/.env" "$DEST/env.backup"
 
 # ── 4. 文件卷（经容器访问：宿主 volumes 目录对 ssh 用户不可读）────────
-log "3/5 文件卷（$DATA_FILES_VOL → $DATA_FILES_MOUNT）…"
+log "3/5 文件卷（$DATA_FILES_VOL → ${DATA_FILES_MOUNT}）…"
 docker exec "$APP_CONTAINER" tar czf - -C "$DATA_FILES_MOUNT" . > "$DEST/data-files.tar.gz"
 tar tzf "$DEST/data-files.tar.gz" > /dev/null || die "data-files.tar.gz 校验失败"
 log "    data-files.tar.gz $(du -h "$DEST/data-files.tar.gz" | cut -f1)，已通过 tar 校验"
