@@ -293,15 +293,19 @@ bash -c 'set -u; m=OK; echo "（模式：$m)"'   → （模式：OK) ✅（ASCII
 | docreader | 挂载 `…`（无 `docreader_ext`）、环境变量无 `PPOCR_*` ⇒ **PP-OCRv6 清理已生效** |
 | searxng | HTTP 200 且**命中 16 条结果**（只看 200 会漏判引擎不可达） |
 | neo4j | Bolt 7687 可连，`NEO4J_ENABLE=true` |
-| 前端产物含上游新功能 | `Toolbox-*.js(101KB)`、`hostWorkspace-*.js`、`resourceSorting` 均在 `assets/` |
+| 前端产物 | commit 标记 `51d389d`（**7 位**）命中 `assets/Settings-DlDxLE8x.js`；上游新功能 `Toolbox-*.js(101KB)`、`hostWorkspace-*.js`、`resourceSorting` 均在 `assets/` |
 
 > ⚠️ **二进制内嵌的不是最新 HEAD**（`a99f54d5` 未命中、`51d389d0` 命中 7 处）——**这是正确的**：
 > `push-app` 执行时 HEAD 还是 `51d389d0`，而 `a99f54d5` 只改 shell 脚本、**不动 Go 代码** ⇒ 二进制无需重编。
 > 核验「容器里跑的是哪一版」时，要取**该产物的构建时点**，而不是当前 HEAD。
 
-> ⚠️ **前端产物内未找到 commit 标记**（`w="…"` 全 dist 搜索 0 命中）⇒
-> 核验前端版本**只能用产物内容**（如确认 `Toolbox-*` 存在），不能依赖标记。
-> 这与第 3 轮 §6.3 的纪律一致，属**验证手段本身不可靠**，已在本文档记录以免后人误信。
+> ⚠️ **一处我自己的误判，已订正（保留记录以防复发）**：
+> 我先用 **8 位** commit（`51d389d0`）去搜前端产物，全 `dist` **0 命中**，
+> 据此写下「前端产物无 commit 标记」——**这是错的**。
+> `push-ui` 传的是 `git rev-parse --short=7`，标记**只有 7 位**；改用 `51d389d` 后立刻命中
+> `assets/Settings-DlDxLE8x.js`（本地与容器内各 1 个，一致）。
+> ★ 同类误判**已是第二次**（第 3 轮 §6.3 记录过一次），且部署技能里早有这条警告 ——
+> **教训不在「不知道」，而在「执行时没先读技能」**。核验前先确认位数。
 
 ### 6.3 过程记录：`push-ui` 被环境的安全删除保护拦下
 
