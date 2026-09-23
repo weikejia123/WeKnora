@@ -18,18 +18,6 @@ from docreader.parser.pptx_media import (
 
 logger = logging.getLogger(__name__)
 
-# ★ wkj 定制：PP-OCRv6 扫描件 OCR 转换器（见 my-docs/15-docreader定制/）。
-#   该目录由 overlay 挂载到 /app/docreader_ext 并经 PYTHONPATH 注入。
-#   取不到时**记 warning 并保持官方行为** —— 不静默改变解析路径。
-try:
-    from ppocr_converter import build_converter as _build_ppocr_converter
-except ImportError:  # pragma: no cover - 未启用定制时
-    _build_ppocr_converter = None
-    logger.warning(
-        "ppocr_converter not importable — PP-OCRv6 PDF path disabled "
-        "(check the /app/docreader_ext mount and PYTHONPATH)"
-    )
-
 
 class StdMarkitdownParser(BaseParser):
     """
@@ -43,13 +31,6 @@ class StdMarkitdownParser(BaseParser):
         # 这里的 super() 会调用 BaseParser 的初始化，确保 self.file_type 被正确赋值
         super().__init__(*args, **kwargs)
         self.markitdown = MarkItDown()
-        # ★ wkj 定制：注册 PP-OCRv6 的 PDF 转换器。
-        #   priority=-1.0 抢在 markitdown 内置 PDF 转换器（0.0）之前；
-        #   register_converter(converter, *, priority) 的签名已对 0.1.3 实测确认。
-        if _build_ppocr_converter is not None:
-            self.markitdown.register_converter(
-                _build_ppocr_converter(), priority=-1.0
-            )
 
     def parse_into_text(self, content: bytes) -> Document:
         """
