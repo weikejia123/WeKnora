@@ -29,7 +29,7 @@
 | WeKnora 侧配合改动 | **无**（尚未接入） |
 | **本机定位** | ⭐ **110 上唯一的 OCR 服务**（2026-09-23 用户决策）。同机 PP-StructureV3、PP-OCRv6（CPU/GPU）、PaddleOCR-VL 的**容器已全部删除、镜像保留**；110 的常驻 AI 组合 = **本服务 + Ollama 的 embedding 模型** |
 
-**实测 `tier=standard` 的产物形态**（用 PPSV3 同批样本测）
+**实测档 = `tier=standard`**（★ 也是**服务默认档**，即不传 tier 就走这档，见 §六-2；用 PPSV3 同批样本测）
 
 | 样本 | 结果 |
 |---|---|
@@ -226,14 +226,44 @@ WeKnora 的 `paddleocr_vl` 引擎读的是 **PPSV3 契约**
 
 下游若按同步语义调用会拿到 `job_id` 而非解析结果。完整链路 5 步（见 110 侧文档 §2）。
 
-**2. `tier` 是能力分级，不是模型档位**
+**2. ★★ `tier` 既是能力分级、也决定「用不用 VLM（起不起 vLLM）」**
 
-源码 `mineru/types.py`：`flash(0) < basic(1) < standard(2) < advanced(3)`，
-服务端 `standard` 展开为**全部四项能力**。请求参数决定，非容器启动时固定。
+MinerU 4.x 是「一套 **hybrid** 框架 + 四档 effort」。先分清三层：
 
-**3. 显存要按峰值算**
+| 层 | 组件 | 模型（本机） | 运行时 | 占 GPU |
+|---|---|---|---|---|
+| OCR（文字识别） | **PP-OCRv6** | `ch_PP-OCRv6_tiny_det` + `ch_PP-OCRv6_small_rec`（印章仍 PP-OCRv4） | onnxruntime | ❌ |
+| 版面 / 表格 / 公式 | hybrid 小模型 | PP-DocLayoutV2 + PP-LCNet + UNet + 公式识别 | torch | 少量 |
+| **高质解析（VLM）** | MinerU2.5 | `MinerU2.5-Pro-2605-1.2B` | **vLLM** | **≈6 GiB** |
 
-静态 7020 MiB，但 38 页文档解析中冲到 8722 MiB（KV cache 增长）⇒ 并发时会更高。
+依据 `mineru/model/registry.py`（OCR 模型清单）+ `mineru/model/runtime/hybrid.py`
+（`HybridLocalModelContext`：layout / ocr / mfr / table）。
+⇒ **不论哪一档，OCR 都是 PP-OCRv6**（注册表不分档）。
+⚠️ 老版本的 `pipeline` 后端在 4.x 已改名 **hybrid** ⇒ 「用管线」在 4.x 对应 **`basic` 档**。
+
+`mineru/parser/tier.py` 的 `_EFFORT_BY_TIER` 注释即「映射为对应的 **Hybrid** effort」；
+但 `GET /v1/tiers` 显示**每档绑定的模型不同**：`flash`→`flash`、`basic`→`hybrid-basic`、
+`standard` / `advanced`→`MinerU2.5-Pro-2605-1.2B`（VLM）。
+
+★ **只有 standard 档需要 vLLM** —— `required_modules_for_tier()` 里
+`if tier == "standard": modules.extend(VLM_REQUIRED_MODULES[...])`；
+`flash` / `basic` **不加载 vLLM 引擎**。
+
+⚠️★ **但默认档 = `standard`**（`parser/api_server.py` 的 `_DEFAULT_API_SERVER_TIER`，
+Web UI 同为 `standard`）⇒ **不传 tier 就拉起 vLLM，且加载后不自动卸载**
+⇒ 这才是 110 上那 ≈6 GiB 占用的**真正来源**，**不是** MinerU 的固有开销。
+
+⇒ **对应到接入方案**：只要 PP-OCRv6 管线就传 `tier=basic`（显存上不再与 Ollama embedding
+争那 50 MiB）；要 VLM 质量则须显式传 `standard`，并接受共卡紧张。
+**选档是 §五 三条路径的前置决策。**
+
+**3. 显存要按峰值算（且峰值不是「KV cache 增长」）**
+
+静态 7020 MiB，38 页文档解析中冲到 **8722 MiB** ⇒ 估余量必须按峰值。
+⚠️ 但那个增长**不是** KV cache：vLLM 的 KV cache 在**启动期按 `gpu_memory_utilization`
+一次预分配、运行期不增长**（启动日志 `Available KV cache memory: 2.15 GiB` 即最终值），
+增长来自激活/中间张量与图像预处理。
+另：**仅 `standard` / `advanced` 档才有这笔 vLLM 开销**（见上条）。
 
 **4. 与 PPSV3 无法共存（单卡 12 GB）**
 
