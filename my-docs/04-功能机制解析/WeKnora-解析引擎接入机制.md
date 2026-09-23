@@ -136,7 +136,7 @@ MarkItDown 的插件系统**不能**让 WeKnora 免于改代码：
 | 做法 | 改官方文件 | 是否重建 docreader 镜像 | 自研代码落点 | OCR 实现 |
 |---|---|---|---|---|
 | 开开关 + 官方 `markitdown-ocr` | 2 处 | **要** | 无 | ❌ LLM Vision |
-| 改 markitdown + 自写 converter（用 `register_converter`） | **1 处（仅 2 行）** | 不用 | `my-docreader/`（自研目录，挂载 + `PYTHONPATH` 注入）—— ✅ **2026-09-22 已实施** | ✅ PP-OCRv6 |
+| 改 markitdown + 自写 converter（用 `register_converter`） | **1 处（仅 2 行）** | 不用 | `my-docreader/`（自研目录，挂载 + `PYTHONPATH` 注入）—— ✅ 2026-09-22 已实施 → ⛔ **2026-09-23 已全部移除**（依赖的 110 `pp-ocr-v6-gpu-api` 服务已删，只剩一次无谓探测 ⇒ 回退官方版本） | ✅ PP-OCRv6 |
 | OpenAI 适配壳（§8.3） | **0** | 不用 | 110 的 pp-ocr 项目 | ✅ PP-OCRv6 |
 
 ---
