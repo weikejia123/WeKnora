@@ -415,7 +415,7 @@ ssh nanning-111 '/mnt/data/weknora/my-scripts/backup-weknora.sh --status'
 |---|---|
 | 环境可随便重建 | `deploy/deploy-wkj-dev.sh:571`（`$DC down`，无 `-v`）、`:23` 注释 |
 | 数据在机械盘 | `my-docs/03-生产部署/…:526`（`DockerRootDir=/mnt/data/docker`）、`:79`（"已迁至机械盘"） |
-| 三个数据卷 | `docker-compose.yml:1032-1035`；`my-docs/02-…:83` |
+| 三个数据卷 | `docker-compose.yml` 顶层 `volumes:` 段（本版起于 :1038）；`my-docs/02-…:83` |
 | 自动迁移每次启动都跑 | `internal/container/container.go:875`、`:886` |
 | 迁移失败不阻断 | `internal/container/container.go:887-892` |
 | dirty 自动恢复 | `internal/database/migration.go:163-169`；`container.go:878` |

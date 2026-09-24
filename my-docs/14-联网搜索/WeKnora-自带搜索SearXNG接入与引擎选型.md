@@ -185,8 +185,8 @@ ssh nanning-111 'curl -s --max-time 45 -A "Mozilla/5.0" \
 
 | 结论 | 证据 |
 |---|---|
-| searxng 被 profile 门控 | `docker-compose.yml:602-604`（`profiles: [searxng, full]`） |
-| settings.yml 模板 → 命名卷 | `docker-compose.yml:558-572`（`searxng-init` 段） |
+| searxng 被 profile 门控 | `docker-compose.yml` 的 `searxng` 服务段内 `profiles:`（本版 :608-610，`[searxng, full]`） |
+| settings.yml 模板 → 命名卷 | `docker-compose.yml` 的 `searxng-init` 段（本版起于 :565） |
 | 引擎白名单机制 | `/usr/local/searxng/searx/settings_loader.py:148-163`（`keep_only` 过滤） |
 | 360search 模块存在且默认禁用 | `/usr/local/searxng/searx/settings.yml` 的 `name: 360search` 段（`disabled: true`） |
 | 360search 的 URL | `searx/engines/360search.py:35`（`base_url = "https://www.so.com"`） |
