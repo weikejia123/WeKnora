@@ -149,10 +149,10 @@ if plain, ok := utils.DecryptStoredSecretLenient(p.APIKey); ok {
 
 | 事实 | 证据 |
 |---|---|
-| 默认开启 | `:875` `if os.Getenv("AUTO_MIGRATE") != "false"`；`.env.example:74` 写 `AUTO_MIGRATE=true` |
+| 默认开启 | `internal/container/container.go` 内 `if os.Getenv("AUTO_MIGRATE") != "false"`（本版 :889）；`.env.example:74` 写 `AUTO_MIGRATE=true` |
 | **每次启动都跑**（不限于部署时） | 位于容器初始化路径，与部署脚本无关 |
-| **失败不阻断** | `:887-892` 仅 `logger.Warnf`，随后 "Continuing with application startup" |
-| **dirty 时自动回退重试** | `AUTO_RECOVER_DIRTY` 默认开（`:878` `!= "false"`）；`internal/database/migration.go:163-169` |
+| **失败不阻断** | `RunMigrationsWithOptions` 的 err 分支仅 `logger.Warnf`（本版 :900-905），随后 "Continuing with application startup" |
+| **dirty 时自动回退重试** | `AUTO_RECOVER_DIRTY` 默认开（本版 :892 `!= "false"`）；`internal/database/migration.go:163-169` |
 | 部署脚本不调用迁移 | `scripts/migrate.sh` 存在，但 `deploy-wkj-dev.sh` **从不引用** ⇒ 无显式关卡 |
 
 **与"只做增量演进"的关系**：迁移内容本身是增量的（符合原则），
@@ -416,9 +416,9 @@ ssh nanning-111 '/mnt/data/weknora/my-scripts/backup-weknora.sh --status'
 | 环境可随便重建 | `deploy/deploy-wkj-dev.sh:571`（`$DC down`，无 `-v`）、`:23` 注释 |
 | 数据在机械盘 | `my-docs/03-生产部署/…:526`（`DockerRootDir=/mnt/data/docker`）、`:79`（"已迁至机械盘"） |
 | 三个数据卷 | `docker-compose.yml` 顶层 `volumes:` 段（本版起于 :1038）；`my-docs/02-…:83` |
-| 自动迁移每次启动都跑 | `internal/container/container.go:875`、`:886` |
-| 迁移失败不阻断 | `internal/container/container.go:887-892` |
-| dirty 自动恢复 | `internal/database/migration.go:163-169`；`container.go:878` |
+| 自动迁移每次启动都跑 | `internal/container/container.go` 的 `AUTO_MIGRATE` 分支及其上方注释（本版 :886-889） |
+| 迁移失败不阻断 | 同文件 `RunMigrationsWithOptions` 的 err 分支（本版 :900-905） |
+| dirty 自动恢复 | `internal/database/migration.go:163-169`；`container.go` 的 `AUTO_RECOVER_DIRTY`（本版 :892） |
 | 部署脚本不调迁移 | `deploy/deploy-wkj-dev.sh` 无 `migrate` 引用 |
 | 初始化脚本一次性且幂等 | `migrations/paradedb/00-init-db.sql`（无 `DROP`/`TRUNCATE`；无脚本引用） |
 | 索引锁表风险 | `migrations/versioned/*.up.sql` 中 `CREATE INDEX` 246 处无 `CONCURRENTLY` |
