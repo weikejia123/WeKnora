@@ -307,7 +307,7 @@ docreader 侧的图片契约非常简单：每个解析器把图片以 `Document
 - unary `Read`：`_resolve_images()` 把全部图片 base64 解码为 `ImageRef.image_data` **内联字节**一次性返回（`image_dir_path` 恒为空——历史上"写共享卷目录"的模式已废弃，注释明确 *"The Go App is solely responsible for persisting images to the configured storage backend (local/minio/cos/tos)"*）；
 - streaming `ReadStream`：`_iter_image_refs()` 逐张 yield，边发边 `pop` 释放内存。
 
-Go 侧接手后（`internal/infrastructure/docparser/image_resolver.go`）：将 inline bytes 上传对象存储、把 markdown 中的 `images/...` 引用重写为存储 URL；随后 `internal/application/service/image_multimodal.go` 依据 metadata 的 `image_source_type` 决策——`scanned_pdf` 的整页图走 OCR（带专用 `ocr_prompt`），普通插图走 VLM caption。知识库配置的图片解析自定义指令（`vlm_config.custom_instructions`）只追加到 caption 提示词，不进入 OCR 提示词，以免干扰 OCR 的输出约定（如无文字图片应回复 `No text content`）。
+Go 侧接手后（`internal/infrastructure/docparser/image_resolver.go`）：将 inline bytes 上传对象存储、把 markdown 中的 `images/...` 引用重写为存储 URL；随后 `internal/application/service/image_multimodal.go` 依据 metadata 的 `image_source_type` 决策——`scanned_pdf` 的整页图走 OCR（带专用 `ocr_prompt`），普通插图走 VLM caption。该服务有两条管线（处理轨迹里 `pipeline` 分别记为 `caption_ocr` / `observation_driven`）：历史管线（KB 未开启 `image_attrs_enabled`）对每张图各发一次描述、各发一次 OCR；属性观察管线（开启后）第一轮先用同一张图的「属性观察＋描述」结果确定属性（`contain.text` / `contain.data_visual`），再由代码纯函数 `DecideOCR` 按 KB 的 `image_actions` 决定该图是否值得再跑 OCR——`contain.text ∈ {sparse, none}` 且已确认观察、且 `data_visual == false` 的图默认只留描述、不花 OCR。两条管线的**图片理解都在 Go 侧**。知识库配置的图片解析自定义指令（`vlm_config.custom_instructions`）只追加到描述提示词（属性观察管线里即「属性观察＋描述」提示词），不进入 OCR 提示词，以免干扰 OCR 的输出约定（如无文字图片应回复 `No text content`）。
 
 各解析引擎输出中的内联 HTML `<table>`（常见于 MinerU、PaddleOCR-VL 与 VLM OCR）会在分块前统一转换为 Markdown 表格；含合并单元格等无法转换的表格保留 HTML，但每行单独成行，保证分块器能在行边界切分。**docreader 内没有任何 VLM 调用**；`models/read_config.py` 中的 `vlm_config`/`storage_config` 字段只是为了老构造函数签名兼容而保留的空壳（"Legacy config kept for backward compatibility"）。
 
@@ -459,6 +459,36 @@ docker build -f docker/Dockerfile.app --build-arg WITH_ANYDOC=0 -t weknora-app .
 | `internal/infrastructure/docparser/anydoc_reader.go` | `DocReader` 实现：转换结果与图片引用组装 |
 | `internal/infrastructure/docparser/engines.go` | 引擎注册（元数据 + Reader 工厂） |
 | `third_party/anydoc-go/` | vendored 的上游 Go 绑定与 C ABI shim（来源与本地改动见该目录 README） |
+
+### MinerU 自建引擎（Go 进程直连，不经 docreader） {#mineru-self-hosted}
+
+`mineru` 引擎由 Go App 直接调用自建的 MinerU 服务（`internal/infrastructure/docparser/mineru_converter.go`）。MinerU 4.0 删除了旧的 `/file_parse` 接口，改为 V1 API，因此 WeKnora 在每次解析前先请求 `GET {mineru_endpoint}/v1/health`，按结果选择协议：
+
+| 探测结果 | 协议 | 流程 |
+| --- | --- | --- |
+| `200` 且 `status=ok` | V1（MinerU ≥ 4.0，`mineru_v1_client.go`） | `POST /v1/uploads` → 按返回的 `upload_url` 上传字节 → `POST /v1/uploads/{id}/complete` → `POST /v1/parse/jobs`（只请求 `zip` 产物）→ 轮询 `GET /v1/parse/jobs/{id}` → `GET /v1/files/{id}/content` 下载 zip，取其中的 `markdown.md` 与 `images/` |
+| `404` / `405` | 旧版（MinerU ≤ 3.x） | `POST /file_parse`，同步返回 Markdown 与 base64 图片 |
+| `503` 带错误结构 | V1，但服务未就绪 | 直接报错（常见于模型预加载失败），不回退旧协议 |
+
+升级 MinerU 不需要改 WeKnora 的配置。两套协议的参数对应关系：
+
+| 设置项（`ParserEngineConfig`） | MinerU ≥ 4.0 | MinerU ≤ 3.x |
+| --- | --- | --- |
+| `mineru_endpoint` | V1 服务地址（如 `http://mineru:8000`） | 同左 |
+| `mineru_server_api_key` | 服务以 `--api-key` 启动时作为 `Authorization: Bearer` 发送 | 不使用 |
+| `mineru_tier` | `tier`：`flash` / `basic` / `standard` / `advanced`；留空由服务端选默认档位（优先 `standard`） | 不使用 |
+| `mineru_parse_method` | `ocr_mode`（`auto` / `txt` / `ocr`） | `parse_method` |
+| `mineru_model`、`mineru_vlm_server_url`、`mineru_enable_formula`、`mineru_enable_table`、`mineru_language` | 忽略（4.0 已删除这些参数；VLM 地址改在 MinerU 的 `config.yaml` 里配置） | 原样发送 |
+
+V1 流程的几个细节：
+
+- 上传时附带 `sha256sum`，服务端已有相同文件时直接复用，不再传字节。
+- 只有 `upload_url` 与 `mineru_endpoint` 同源（scheme、host、端口都相同）时才附带 API Key；跨源地址（如官方 API 下发的预签名对象存储 URL）不带 Key，并照常经过 SSRF 校验。
+- 轮询从 2 秒开始指数退避，最长 30 秒一次；总时长与旧版一样是 1000 秒。超时或调用方取消时，会发 `DELETE /v1/parse/jobs/{id}` 取消服务端任务。
+- MinerU V1 服务的上传、任务状态都存在进程内存里，服务重启后正在轮询的任务会返回 404，本次解析直接失败。
+- 「测试连接」在 V1 服务上额外请求一次需要鉴权的 `GET /v1/parse/jobs?limit=1`，用来发现 API Key 缺失或错误（`/v1/health` 本身不校验 Key）。
+
+`mineru_cloud`（mineru.net）目前仍走 `/api/v4/file-urls/batch` 批量接口，不受 4.0 自建服务变化影响。
 
 ---
 
