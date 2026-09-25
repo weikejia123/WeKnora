@@ -45,6 +45,37 @@
 - 「测试连接」在 V1 上会**额外请求一次需要鉴权的** `GET /v1/parse/jobs?limit=1`
   ⇒ 能发现 API Key 缺失/错误（`/v1/health` 本身不校验 Key）
 
+### ★ 服务端契约实测（2026-09-25，110 实测通过）
+
+不依赖 WeKnora，直接走完 V1 五步，确认 110 侧契约与官方实现的假设一致：
+
+| 步 | 调用 | 实测结果 |
+|---|---|---|
+| 1 | `POST /v1/uploads`（`filename` / `bytes` / `mime_type` / `sha256sum`） | 200，返回 `upload_id` + `upload_url` + **`upload_method: PUT`** |
+| 2 | `PUT {upload_url}`（字节流，`Content-Type` 取自响应里的 `upload_headers`） | 200 |
+| 3 | `POST /v1/uploads/{id}/complete` | `status: completed`，返回 `file.id`（`file-…`） |
+| 4 | `POST /v1/parse/jobs` | 返回 **`job_id`**（注意字段名不是 `id`） |
+| 5 | `GET /v1/parse/jobs/{job_id}` 轮询 | `completed`，`duration_ms: 47784`、`parser_version: 4.0.6`、`output_files.zip.file_id` |
+| 6 | `GET /v1/files/{zip_file_id}/content` | 1,395,098 B 的 zip |
+
+产物 zip **23 个条目**：`markdown.md`（29,083 字符，内容与原文一致）+ **19 张图片** +
+`middle_json.json` / `structured_content.json` / `model_output.json`。
+
+★ **两个只有实测才会知道的细节**（写代码 / 排障时有用）：
+
+1. **`files` 不是字符串数组**，而是 `JobFileEntry` 对象数组，且 `source` 是**按 `type` 区分的联合类型**：
+   `{"files":[{"source":{"type":"file_id","file_id":"file-…"}}]}`。传 `["file-…"]` 会 **400**。
+2. **`sha256sum` 命中已有文件时 `upload_url` 为 `null`**（服务端直接复用）⇒ 调用方必须判空，
+   不能假定"创建 upload 后一定有 URL 可 PUT"。
+
+★ 其余实测观察：
+
+- `/v1/tiers` 返回的四档（`flash` / `basic` / `standard` / `advanced`）与 WeKnora 的
+  `mineru_tier` 选项**逐一对应**，且各带 `current_model`（standard/advanced 都是
+  `MinerU2.5-Pro-2605-1.2B`）。
+- `tier: standard` 确实**懒加载** vLLM：`/v1/health` 200 时显存几乎为 0，
+  **首次解析才加载**（解析后 used 5263 MiB）⇒ 「探测通过」与「能解析」是两件事，别只看前者。
+
 ---
 
 ## 二、原方案为什么可以不做了（保留决策经过）
