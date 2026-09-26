@@ -372,7 +372,7 @@
     <tr><td>Wiki 任务由入库后处理触发</td><td><code>knowledge_post_process.go:409</code>（入队）；<code>:435-444</code> 调 <code>enqueueWikiIngestTrigger</code></td></tr>
     <tr><td>KB 级同名页复用（跨文档关联关键）</td><td><code>wiki_ingest_dedup.go:486-531</code> <code>FindPagesByNormalizedTitles(ctx, kbID, ...)</code></td></tr>
     <tr><td>页面互链注入</td><td><code>wiki_linkify.go:25-83</code>；死链清理 <code>wiki_ingest.go:1716</code>；交叉链接 <code>:1812</code></td></tr>
-    <tr><td>"图谱"实为 Wiki 互链图</td><td><code>internal/handler/wiki_page.go:785-800</code> "Get wiki link graph"；路由 <code>routes_knowledge.go:326</code> <code>/wiki/graph</code></td></tr>
+    <tr><td>"图谱"实为 Wiki 互链图</td><td><code>internal/handler/wiki_page.go</code> 的 "Get wiki link graph"（本版 :786 起）；路由注册随官方重构已挪位（原 <code>routes_knowledge.go:326</code> 失效，以 <code>internal/router/</code> 现查为准）<code>/wiki/graph</code></td></tr>
     <tr><td>GraphRAG 未启用</td><td>启动日志 <code>container.go:1545 NOT SUPPORT RETRIEVE GRAPH</code>；<code>.env</code> 无 NEO4J_*；无 neo4j 容器</td></tr>
     <tr><td>GraphRAG 的抽取范围是单 chunk</td><td><code>internal/application/service/extract.go:355</code>（<code>Extract(ctx, chunk.Content)</code>），节点带 <code>{KnowledgeBase, Knowledge}</code> 双 label <code>:372</code></td></tr>
     <tr><td>GraphRAG 的跨文档发生在检索期</td><td><code>search_entity.go:106</code> 用 <code>NameSpace{KnowledgeBase: kbID}</code> → 命中该 KB 全部文档节点；<code>repository.go:178-182</code></td></tr>

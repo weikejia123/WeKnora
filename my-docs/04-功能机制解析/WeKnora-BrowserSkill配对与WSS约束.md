@@ -42,7 +42,7 @@ func pairingEndpoint(raw string) (string, error) {
 
 | 位置 | 原文 |
 |---|---|
-| `.env.example:785` | 「可选覆盖：仅在网关使用独立域名/路径等特殊部署时设置；**远程部署必须使用 WSS（包括内网）**。」 |
+| `.env.example:804` | 「可选覆盖：仅在网关使用独立域名/路径等特殊部署时设置；**远程部署必须使用 WSS（包括内网）**。」 |
 | `website-docs/05-clients/09-local-browser.md` | 「**WSS 可以使用企业 CA，无需公网**；**远程明文 WS 不受支持**。」 |
 
 ⇒ 上游明确把"内网明文 ws"排除在外，并指出内网可行路径是**企业 CA / 自签证书**。

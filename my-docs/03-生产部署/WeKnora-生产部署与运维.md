@@ -718,7 +718,7 @@ Container WeKnora-app Error dependency failed to start: container WeKnora-app is
 ### 5.6 111 的接入层（nginx，2026-09-21 新增并改版）
 
 **用途**：让浏览器以 `https://` + `wss://` 访问**两个前端**。BrowserSkill 配对**必须** wss
-（`internal/browserskill/manager.go` 的 `pairingEndpoint()`；上游 `.env.example:785`「远程部署必须使用
+（`internal/browserskill/manager.go` 的 `pairingEndpoint()`；上游 `.env.example:804`「远程部署必须使用
 WSS（包括内网）」）。机制与排查详见 `my-docs/04-功能机制解析/WeKnora-BrowserSkill配对与WSS约束.md`。
 
 | 项 | 值 |
