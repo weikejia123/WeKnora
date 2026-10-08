@@ -4,7 +4,8 @@
 #
 #   部署分支：wkj-dev
 #   部署目标：nanning-111 (10.168.1.111)  →  /mnt/data/weknora
-#   代码中转：nanning-110 Gitea (10.168.1.110:13000) → wakeagent/WeKnora
+#   代码中转：nanning-111 Gitea (10.168.1.111:13000) → wakeagent/WeKnora
+#   （2026-10-06 Gitea 由 110 迁至 111，与部署目标同机）
 #   对外入口：41200 = 官方前端(https) · 41280 = 定制前端(https) · 41201 = 后端 API(http)
 #             https 入口由容器组内的 nginx 服务提供（配置在 my-docker/nginx/）；
 #             两个前端容器**只绑宿主回环**（41211 / 41212）
@@ -57,9 +58,9 @@ set -euo pipefail
 readonly BRANCH="wkj-dev"                       # ★ 部署分支（脚本名即由此而来）
 readonly SSH_HOST="nanning-111"                 # ~/.ssh/config 中的别名
 readonly REMOTE_DIR="/mnt/data/weknora"         # 111 上的部署目录（机械盘）
-readonly GITEA_HOST="10.168.1.110:13000"        # 110 Gitea
+readonly GITEA_HOST="10.168.1.111:13000"        # 111 Gitea（原 110，2026-10-06 迁移）
 readonly GITEA_REPO="wakeagent/WeKnora"         # 仓库路径
-readonly GITEA_CRED_KEY="10.168.1.110%3a13000"  # ~/.git-credentials 中的匹配键
+readonly GITEA_CRED_KEY="10.168.1.111%3a13000"  # ~/.git-credentials 中的匹配键
 readonly FRONTEND_PORT=41200                    # 前端对外端口
 readonly APP_PORT=41201                         # 后端对外端口
 readonly HEALTH_TIMEOUT=420                     # 健康检查最长等待（秒），首次启动需建表
@@ -95,10 +96,10 @@ die()  { printf '%s  ✘ %s%s\n' "$C_ERR" "$*" "$C_OFF" >&2; exit 1; }
 step() { printf '\n%s──── %s ────%s\n' "$C_INFO" "$*" "$C_OFF"; }
 
 # ------------------------------------------------------------------ 凭据读取
-# 从本机 ~/.git-credentials 读取 110 Gitea 的凭据；不回显密码。
+# 从本机 ~/.git-credentials 读取 111 Gitea 的凭据；不回显密码。
 read_local_cred() {
   local f="$HOME/.git-credentials"
-  [ -f "$f" ] || die "本机缺少 ${f}，无法获取 110 Gitea 凭据"
+  [ -f "$f" ] || die "本机缺少 ${f}，无法获取 111 Gitea 凭据"
   local line
   line=$(grep -- "$GITEA_CRED_KEY" "$f" 2>/dev/null | head -1 || true)
   [ -n "$line" ] || die "在 $f 中找不到 $GITEA_CRED_KEY 的凭据条目"
@@ -145,12 +146,12 @@ preflight_remote() {
 }
 
 # ------------------------------------------------------------------ 代码同步
-# 1) 本地 → 110 Gitea（push）
-# 2) 110 Gitea → 111（fetch/reset）
+# 1) 本地 → 111 Gitea（push）
+# 2) 111 Gitea → 111 本机（fetch/reset）
 sync_code() {
-  step "① 推送本地 $BRANCH → 110 Gitea"
-  GIT_TERMINAL_PROMPT=0 git -C "$REPO_ROOT" push gitea110 "$BRANCH" 2>&1 | tail -5 \
-    || die "推送失败（检查 remote gitea110 与凭据）"
+  step "① 推送本地 $BRANCH → 111 Gitea"
+  GIT_TERMINAL_PROMPT=0 git -C "$REPO_ROOT" push gitea111 "$BRANCH" 2>&1 | tail -5 \
+    || die "推送失败（检查 remote gitea111 与凭据）"
   ok "已推送 $BRANCH"
 
   step "② 在 111 上拉取代码"
@@ -160,9 +161,9 @@ sync_code() {
   # 确保 111 上有凭据（写进它自己的 credential store，供后续 fetch 复用）
   ssh "$SSH_HOST" "CRED='$cred' bash -s" <<'REMOTE_PREP'
 set -e
-if ! grep -q '10.168.1.110%3a13000' ~/.git-credentials 2>/dev/null; then
+if ! grep -q '10.168.1.111%3a13000' ~/.git-credentials 2>/dev/null; then
   mkdir -p ~ && umask 077
-  echo "http://${CRED}@10.168.1.110%3a13000" >> ~/.git-credentials
+  echo "http://${CRED}@10.168.1.111%3a13000" >> ~/.git-credentials
   chmod 600 ~/.git-credentials
   echo "  （已在 111 上登记 Gitea 凭据）"
 fi
