@@ -131,7 +131,7 @@ Go 是编译型语言，容器里跑的是**单个二进制**（`/app/WeKnora`�
 | 应用 | 形态 | 能否映射替换 | 代价 |
 |---|---|---|---|
 | `frontend` / `frontend-wkj` | **静态文件** | ✅ 最理想 | 无（换文件即生效） |
-| `docreader` | **Python 源码** | ✅ 适用 | 代码在 `/app/docreader/`（`Dockerfile.docreader:157`），依赖装在镜像内 venv（`:147`）⇒ **只换源码、依赖不变时无需重建**。入口 `CMD ["uv","run","-m","docreader.main"]`（`:166`） |
+| `docreader` | **Python 源码** | ✅ 适用 | 代码在 `/app/docreader/`（`Dockerfile.docreader:77`），依赖装在镜像内 venv（`:147`）⇒ **只换源码、依赖不变时无需重建**。入口 `CMD ["/app/.venv/bin/python","-m","docreader.main"]`（`:177`） |
 | `app` | **编译产物**（Go + cgo） | ⚠️ **不推荐** | 见下三个硬障碍 |
 
 ### `app` 的三个硬障碍（实测）

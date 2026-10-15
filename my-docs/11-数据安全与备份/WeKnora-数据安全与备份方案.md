@@ -149,7 +149,7 @@ if plain, ok := utils.DecryptStoredSecretLenient(p.APIKey); ok {
 
 | 事实 | 证据 |
 |---|---|
-| 默认开启 | `internal/container/container.go` 内 `if os.Getenv("AUTO_MIGRATE") != "false"`（本版 :890）；`.env.example:74` 写 `AUTO_MIGRATE=true` |
+| 默认开启 | `internal/container/container.go` 内 `if os.Getenv("AUTO_MIGRATE") != "false"`（本版 :930）；`.env.example:78` 写 `AUTO_MIGRATE=true` |
 | **每次启动都跑**（不限于部署时） | 位于容器初始化路径，与部署脚本无关 |
 | **失败不阻断** | `RunMigrationsWithOptions` 的 err 分支仅 `logger.Warnf`（本版 :901-906），随后 "Continuing with application startup" |
 | **dirty 时自动回退重试** | `AUTO_RECOVER_DIRTY` 默认开（本版 :893 `!= "false"`）；`internal/database/migration.go:163-169` |

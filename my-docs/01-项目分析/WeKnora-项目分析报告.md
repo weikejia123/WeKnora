@@ -353,8 +353,8 @@ gunzip -c weknora-images.tar.gz | docker load
 
 | 位置 | 行为 |
 |---|---|
-| `docker/Dockerfile.app:121` | `curl -LsSf https://astral.sh/uv/install.sh` |
-| `docker/Dockerfile.docreader:60` | 下载 `protoc-3.19.4-linux-*.zip`（**有离线兜底**：若 `packages/` 下有本地包则跳过下载） |
+| `docker/Dockerfile.app:171` | `curl -LsSf https://astral.sh/uv/install.sh` |
+| `docker/Dockerfile.docreader:65` | 下载 `protoc-3.19.4-linux-*.zip`（**有离线兜底**：若 `packages/` 下有本地包则跳过下载） |
 | `docker/Dockerfile.docreader` | `python -m playwright install webkit`（需下载浏览器内核） |
 | `scripts/build_browserskill.sh:35` | `git clone https://github.com/Tencent/BrowserSkill.git` |
 | `frontend/` | npm 依赖（可用 `NPM_REGISTRY` 指向内网镜像；`xlsx` 需从 SheetJS 官方固定地址安装） |
