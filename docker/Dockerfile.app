@@ -1,19 +1,11 @@
 # Build extension and daemon from the same pinned source on the runtime architecture.
 FROM --platform=$TARGETPLATFORM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS browserskill
 WORKDIR /build
-# apt 换源开关（可选，留空 = 全程官方 deb.debian.org，行为与上游逐字一致）。
-#
-# ★ 与 builder / final 阶段的写法差别，源于**基镜像不同**：
-#   本阶段是 node:24-bookworm-slim，属 **slim 变体，不自带 ca-certificates**；
-#   而国内若干镜像（实测 mirrors.tencent.com / mirrors.cloud.tencent.com）的 http
-#   会 **302 跳到 https** ⇒ 无 CA 时 apt 会静默忽略全部索引
-#   （⚠️ `apt-get update` 仍返回 0，属**假成功**）⇒ 后续 install 失败。
-#   因此必须**先用官方源装 ca-certificates，再换源** —— 与下方 final 阶段的处理同构。
-#
-# 实测（node:24-bookworm-slim，两步各验索引命中数）：
-#   步骤1 官方源 update + 装 CA ：索引 3、CA 就位、150s
-#   步骤2 换源后再 update       ：索引 3、2s（此时 apt 能跟随 302 走 https）
+# Use the same optional Debian mirror as the Go builder and runtime stages.
 ARG APK_MIRROR_ARG
+# This base image has no CA certificates. Install them from the original HTTP
+# Debian source before swapping in a mirror: mirrors.tencent.com redirects
+# apt to HTTPS, and that handshake fails without a trust store.
 RUN if [ -n "$APK_MIRROR_ARG" ]; then \
         apt-get update && \
         apt-get install -y --no-install-recommends ca-certificates && \
