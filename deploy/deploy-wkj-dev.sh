@@ -571,6 +571,23 @@ echo "  启动前端与接入层..."
 # 前端容器只绑回环，对外入口（443 / 41200 / 41280）全部由 nginx 提供。
 $DC up -d frontend frontend-wkj nginx
 
+# ── 前端内嵌 nginx 的 DNS 过期自愈（2026-10-15 实测新增）──────────────
+# 两个前端容器的**内嵌** nginx 在自己启动时解析一次 `${APP_HOST}`（= `app`），
+# 之后不再更新（nginx 的固有行为：启动时解析，不跟踪容器 IP 变化）。
+# 若本次 up 重建了 app（IP 变了）而前端容器因 config-hash 未变没跟着重建
+# ⇒ 内层 nginx 仍连旧 IP ⇒ 所有 /api 请求 502（官方入口）或 404（定制前端），
+# **登录全挂** —— 而容器状态栏全绿、app 直连 41201 也 200，极具欺骗性。
+# 判据：app 的 StartedAt 晚于前端 ⇒ 重启该前端让它重新解析
+# （docker restart 不换容器 IP，不影响上层接入层 nginx 的 upstream）。
+APP_TS=$(date -d "$(docker inspect WeKnora-app --format '{{.State.StartedAt}}' 2>/dev/null)" +%s 2>/dev/null || echo 0)
+for _fe in WeKnora-frontend WeKnora-frontend-wkj; do
+  _fe_ts=$(date -d "$(docker inspect "$_fe" --format '{{.State.StartedAt}}' 2>/dev/null)" +%s 2>/dev/null || echo 0)
+  if [ "${APP_TS:-0}" -gt "${_fe_ts:-0}" ]; then
+    echo "  app 于 $_fe 之后重建 ⇒ 重启 $_fe（内嵌 nginx 重新解析 app 的 IP）"
+    docker restart "$_fe" >/dev/null
+  fi
+done
+
 # ── 自带搜索（searxng）────────────────────────────────────────────────
 # 官方基底里 searxng / searxng-init 是 `profiles: [searxng, full]` 门控的，
 # 靠 $DC 上的 `--profile searxng` 才纳入本容器组。
