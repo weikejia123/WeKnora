@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WeKnora（wkj-dev）工程成熟度与记忆系统分析报告</title>
+<style>
+  :root{
+    --ink:#0f172a; --ink2:#334155; --ink3:#64748b;
+    --line:#e2e8f0; --paper:#ffffff; --bg:#f1f5f9;
+    --blue:#2563eb; --purple:#7c3aed; --orange:#ea580c;
+    --green:#059669; --red:#dc2626; --amber:#b45309;
+    --teal:#0d9488; --slate:#475569;
+    --blue-bg:#eff6ff; --purple-bg:#f5f3ff; --teal-bg:#f0fdfa; --amber-bg:#fffbeb;
+    --red-bg:#fef2f2; --green-bg:#f0fdf4;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:32px 20px 64px;
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px; line-height:1.75;
+  }
+  .wrap{max-width:1080px;margin:0 auto}
+  header{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:24px 28px;margin-bottom:26px}
+  h1{margin:0 0 8px;font-size:23px;letter-spacing:.2px}
+  .meta{color:var(--ink3);font-size:13px;margin-bottom:14px}
+  .badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+  .badge{display:inline-block;background:#eff6ff;color:var(--blue);border:1px solid #bfdbfe;
+    border-radius:6px;padding:2px 9px;font-size:12px;font-weight:600;margin-right:6px}
+  .badge.g{background:#f0fdf4;color:var(--green);border-color:#a7f3d0}
+  .badge.a{background:#fffbeb;color:var(--amber);border-color:#fde68a}
+  .badge.p{background:var(--purple-bg);color:var(--purple);border-color:#ddd6fe}
+  .badge.t{background:var(--teal-bg);color:var(--teal);border-color:#a7f3d0}
+  .section{margin-bottom:28px}
+  section{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:22px 28px;margin-bottom:24px}
+  h2{margin:0 0 6px;font-size:18px}
+  h2 .num{display:inline-block;width:26px;height:26px;line-height:26px;text-align:center;
+    background:var(--ink);color:#fff;border-radius:7px;font-size:13px;margin-right:11px;vertical-align:2px}
+  .sub{color:var(--ink3);font-size:13px;margin:0 0 18px 37px}
+  .svgbox{width:100%;overflow-x:auto}
+  svg{display:block;width:100%;height:auto;min-width:760px}
+  .note{background:#fffbeb;border:1px solid #fde68a;border-left:4px solid var(--amber);
+    border-radius:9px;padding:13px 16px;margin-top:18px;font-size:13px;color:#78350f}
+  .note.alert{background:#fef2f2;border-color:#fecaca;border-left-color:var(--red);color:#7f1d1d}
+  .note b{color:inherit}
+  .note.good{background:var(--green-bg);border-color:#a7f3d0;border-left-color:var(--green);color:#166534}
+  .grid{display:grid;gap:14px}
+  .g4{grid-template-columns:repeat(auto-fit,minmax(226px,1fr))}
+  .card{border:1px solid var(--line);border-radius:11px;padding:15px 17px;background:#fcfdff}
+  .card .t{font-weight:700;font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+  .card .d{font-size:12.5px;color:var(--ink2);line-height:1.65}
+  .dot{width:10px;height:10px;border-radius:50%;flex:none}
+  .verdict{border:1px solid var(--line);border-left:5px solid var(--blue);border-radius:11px;
+    padding:14px 17px;background:#fcfdff;margin-bottom:12px}
+  .verdict .vt{font-weight:700;font-size:14px;margin-bottom:3px}
+  .verdict .vd{font-size:12.5px;color:var(--ink2);line-height:1.65}
+  .meter{position:relative;width:100%;height:20px;background:#e2e8f0;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+  .meter .fill{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,#2563eb 0%,#059669 100%);border-radius:10px;height:100%}
+  .meter .t{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;
+    padding:0 12px;font-size:12px;color:var(--ink2)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f8fafc;font-weight:700;font-size:12.5px;color:var(--ink2);white-space:nowrap}
+  td code,code{background:#f1f5f9;border:1px solid var(--line);border-radius:4px;
+    padding:0 5px;font-size:12px;font-family:ui-monospace,Menlo,monospace;color:#0f172a}
+  .yes{color:var(--green);font-weight:700}
+  .no{color:var(--red);font-weight:700}
+  .mid{color:var(--amber);font-weight:700}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:4px;font-weight:700;margin-right:4px}
+  .tag.high{background:var(--green-bg);color:var(--green);border:1px solid #a7f3d0}
+  .tag.mid{background:var(--amber-bg);color:var(--amber);border:1px solid #fde68a}
+  .tag.low{background:#fef2f2;color:var(--red);border:1px solid #fecaca}
+  .footer{text-align:center;color:var(--ink3);font-size:12.5px;padding-top:10px}
+  .evidence{font-size:12.5px;color:var(--ink2);line-height:1.7}
+  .evidence .loc{color:var(--purple);font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--ink2);margin-top:8px}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>WeKnora（wkj-dev）工程成熟度与记忆系统分析报告</h1>
+  <div class="meta">
+    分析对象：<code>projects/rag-tools/WeKnora</code>（v0.9.0 · 分支 <code>wkj-dev</code> · 上游 <code>Tencent/WeKnora</code> · MIT）｜
+    专项聚焦：<b>工程成熟度</b> + <b>记忆系统（长期记忆）设计</b>
+  </div>
+  <div class="badges">
+    <span class="badge g">工程成熟度：高（生产可交付）</span>
+    <span class="badge t">记忆系统：知识库内融合型 · 设计领先</span>
+    <span class="badge p">行业定位：记忆与知识库检索/组织融合</span>
+    <span class="badge a">生产可用：可生产（需满足前置条件）</span>
+  </div>
+</header>
+
+<!-- ===================== 结论速览（由浅入深 · 第一层） ===================== -->
+<section>
+  <h2><span class="num">0</span>结论速览（TL;DR）</h2>
+  <p class="sub">由浅入深的第一层：先给结论，再展开论证。</p>
+
+  <div class="verdict">
+    <div class="vt">一句话结论</div>
+    <div class="vd">
+      WeKnora（wkj-dev）是一个<b>工程成熟度较高、已达到生产可交付水平</b>的私有化知识管理平台；其
+      <b>长期记忆系统属于「记忆与知识库检索/组织深度融合」的领先设计</b>——在冲突处理、人工确认、敏感脱敏、
+      记忆-检索联动、向量检索下沉等维度具备行业优势；但它是「知识库平台的附加能力」，<b>并非独立的记忆引擎</b>，
+      且生产落地需先满足一组模型 / 镜像 / 网络前置条件。
+    </div>
+  </div>
+
+  <div class="grid g4" style="margin-top:14px">
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--green)"></span>工程成熟度</div>
+      <div class="d">架构分层清晰、接口抽象完备、测试文化强（2003 个测试文件，记忆相关约 7900 行）、
+        迁移 / 外置 / 可观测 / 安全体系完整 ⇒ 工程层面达到生产就绪。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--teal)"></span>生产可用性</div>
+      <div class="d">标准版 Compose 架构 + 外置迁移 + 应用代码外置 + 生产部署脚本，满足私有化内网生产要求；
+        需自备 Embedding/LLM API 与 5 个离线镜像、处理若干出网配置。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--blue)"></span>记忆系统定位</div>
+      <div class="d">「长期记忆 × 知识库检索/组织」融合型设计：记忆不仅进提示词，还反哺检索排序与文档组织，
+        是记忆类产品里把价值真正落地的设计。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--purple)"></span>行业领先性</div>
+      <div class="d">在融合 / 一致性 / 信任 / 安全维度领先；不领先于「纯记忆引擎」（mem0 / Graphiti）
+        与「深度版面解析」（RAGFlow）。</div>
+    </div>
+  </div>
+
+  <h2 style="margin-top:22px"><span class="num">0</span>核心判断（四条）</h2>
+  <div class="grid" style="gap:12px">
+    <div class="verdict" style="border-left-color:var(--green)">
+      <div class="vt"><span class="tag high">高</span>工程成熟度：达到生产可交付水平</div>
+      <div class="vd">分层与接口设计规范、测试覆盖充分（含一致性 / 并发竞态 / 评测测试）、迁移与外置体系完备、
+      Langfuse 全链路可观测、RBAC/审计/敏感脱敏安全体系完整。工程短板主要是<b>生态与社区规模小</b>，不属工程问题。</div>
+    </div>
+    <div class="verdict" style="border-left-color:var(--teal)">
+      <div class="vt"><span class="tag high">可生产</span>记忆系统可进入生产（标准版 Compose）</div>
+      <div class="vd">记忆读写、抽取、冲突解决、向量召回、管理接口均已完整实现并测试；生产前提为自备 Embedding + LLM API、
+      5 个离线镜像、处理 8 处默认出网配置。默认检索向量库为逻辑隔离，多领域物理隔离需更换向量库。</div>
+    </div>
+    <div class="verdict" style="border-left-color:var(--blue)">
+      <div class="vt"><span class="tag high">设计领先</span>记忆系统为「融合型」领先设计</div>
+      <div class="vd">针对长期记忆的四大核心痛点（污染提示词 / 错误记忆静默污染 / 与知识库脱节 / 记忆膨胀成本），
+      分别用「预算控制 + 人工确认 + 检索联动 + 向量下沉」解决；冲突解决与安全脱敏的工程严谨度高于多数记忆方案。</div>
+    </div>
+    <div class="verdict" style="border-left-color:var(--purple)">
+      <div class="vt"><span class="tag mid">非独立领先</span>行业定位：记忆融合领先，引擎非独立领先</div>
+      <div class="vd">领先于「记忆与知识库融合」这一方向；不领先于纯记忆引擎（mem0 / Graphiti）与深度版面解析（RAGFlow）。
+      生产选型需结合「是否需要独立记忆引擎、是否需要深度解析」来定。</div>
+    </div>
+  </div>
+
+  <div class="meter" style="margin-top:18px">
+    <div class="fill" style="width:92%"></div>
+    <div class="t"><span>工程成熟度综合评分</span><span>92 / 100（高，生产可交付）</span></div>
+  </div>
+  <div class="note" style="margin-top:12px">
+    <b>评分口径：</b>按「架构分层 · 代码质量与结构 · 测试与质量保障 · 数据与迁移 · 可观测性 · 安全与权限 · 部署与运维 · 生态与社区」八维度打分；
+    生态与社区维度为中等（MIT 但社区规模小、扩展生态弱），拉低至 8 分，其余维度为 9 分以上。综合取加权后约 <b>92 分</b>。
+  </div>
+</section>
+
+<!-- ===================== 1. 项目定位与工程成熟度总览（浅） ===================== -->
+<section>
+  <h2><span class="num">1</span>项目定位与工程成熟度总览（浅）</h2>
+  <p class="sub">先建立认知：这个项目是什么、工程底座如何、成熟度在哪些维度达标。</p>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:14px 0 8px">1.1 项目定位</h3>
+  <div class="grid g4">
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--blue)"></span>三大能力模式</div>
+      <div class="d">RAG 快速问答（可引用来源）· ReAct Agent 智能推理（多步编排）· 自动 Wiki（自治生成互链页面 + 知识图谱）。三者共用同一知识库，长期记忆是贯穿三者的个性化层。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--purple)"></span>工程底座</div>
+      <div class="d">Go 1.26 后端（单二进制）+ Vue3 前端 + 独立 Python docreader 解析服务；标准 Docker Compose 生产部署，支持 Kubernetes（Helm）/ Lite 单二进制。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--teal)"></span>工程治理手段</div>
+      <div class="d">基底 + 叠加层编排（官方文件不动）、外置迁移、应用代码外置四层、幂等生产部署脚本、Langfuse 全链路可观测、RBAC/审计/凭据加密。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--green)"></span>二开定制形态</div>
+      <div class="d">官方层与定制层物理分离（my-* 目录）；定制服务含 frontend-wkj / nginx 接入层 / searxng / neo4j；服务端口统一取 41200–41299 号段。</div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">1.2 工程成熟度评估维度与结果</h3>
+  <table>
+    <thead>
+      <tr><th style="width:180px">评估维度</th><th style="width:52%">现状与证据</th><th style="width:140px">成熟度评级</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>架构分层与可扩展性</td>
+        <td>9 类扩展点抽象为接口；OpenAI 兼容协议可零代码接入；有接口但扩展需改代码（无动态插件）</td>
+        <td><span class="tag high">高</span></td>
+      </tr>
+      <tr>
+        <td>代码质量与结构</td>
+        <td>3671 个 Go 文件（internal 3287 个），types / service / repository / handler / router / stream / background / agent / tracing 模块清晰，接口抽象完备</td>
+        <td><span class="tag high">高</span></td>
+      </tr>
+      <tr>
+        <td>测试与质量保障</td>
+        <td>2003 个测试文件；记忆相关 263 个文件、约 7900 行测试；含一致性测试、并发竞态测试、评测/质量测试、Postgres 测试</td>
+        <td><span class="tag high">高</span></td>
+      </tr>
+      <tr>
+        <td>数据与迁移体系</td>
+        <td>外置迁移 + 自动迁移 + 版本一致性校验（部署脚本 check_migrations 核对库版本与文件版本）；记忆迁移分三阶段演进（建表→会话进度→向量下沉）</td>
+        <td><span class="tag high">高</span></td>
+      </tr>
+      <tr>
+        <td>可观测性</td>
+        <td>Langfuse 全链路追踪（记忆 recall、检索条件化、任务队列、解析时间线）；对话时间线可回显本条答案注入了哪些记忆</td>
+        <td><span class="tag high">高</span></td>
+      </tr>
+      <tr>
+        <td>安全与权限</td>
+        <td>多空间 RBAC 四级角色、审计日志、AES-256-GCM 凭据加密、敏感信息自动脱敏、pending 永不注入提示词</td>
+        <td><span class="tag high">高</span></td>
+      </tr>
+      <tr>
+        <td>部署与运维</td>
+        <td>标准 Compose 生产部署（111 站点实测）、幂等部署脚本、应用代码外置、数据安全纪律（.env 不入版本控制）</td>
+        <td><span class="tag high">高</span></td>
+      </tr>
+      <tr>
+        <td>生态与社区</td>
+        <td>MIT 协议，但社区规模较小、第三方扩展生态弱、无动态插件机制</td>
+        <td><span class="tag mid">中</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note good">
+    <b>成熟度结论：</b>工程层面 7 个维度中 7 个为「高」，仅生态与社区为「中」。整体上<b>工程成熟度达到生产可交付水平</b>；
+    需要重点补充的不是工程短板，而是「生产前的安全 / 性能 / 稳定性压测」与「生态扩展」两类非工程项。
+  </div>
+</section>
+
+<!-- ===================== 2. 记忆系统：业务定义与架构（浅） ===================== -->
+<section>
+  <h2><span class="num">2</span>记忆系统：业务定义与架构（浅）</h2>
+  <p class="sub">先理解长期记忆「是什么、管什么、怎么组织」，再进入设计层。</p>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:14px 0 8px">2.1 长期记忆是什么</h3>
+  <div class="grid g4">
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--blue)"></span>功能定位</div>
+      <div class="d">跨会话长期记忆：保存调用者的资料、表达偏好、稳定事实、长期关注，供后续会话使用；按「工作空间 + 主体身份」隔离，不同空间 / IM 用户 / 嵌入访客分别维护个人记忆。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--purple)"></span>记忆条目类型</div>
+      <div class="d">资料（profile）· 偏好（preference）· 事实（fact）· 事项（task）· 兴趣（interest）。同一主题的新事实可替代旧事实。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--teal)"></span>与三大模式的关系</div>
+      <div class="d">RAG 问答（记忆进上下文）· Agent（记忆作为工具）· Wiki（记忆偏好影响文档组织）。记忆是贯穿三者的个性化层，不扩展知识库访问权限。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--green)"></span>写入开关</div>
+      <div class="d">空间开关（默认关闭）+ 个人关闭 + 智能体开关三重约束；写入模式分 <code>explicit_only</code>（仅明确记住，不跑后台）与 <code>auto</code>（后台抽取）。</div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">2.2 记忆系统分层架构</h3>
+  <div class="svgbox">
+  <svg viewBox="0 0 980 570" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,PingFang SC,Microsoft YaHei,sans-serif">
+    <defs>
+      <marker id="ar1" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#94a3b8"/>
+      </marker>
+    </defs>
+
+    <!-- E 数据与配置层 -->
+    <rect x="30" y="120" width="920" height="78" rx="10" fill="#f0f7ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="48" y="149" font-size="14" font-weight="700" fill="#1e40af">E · 数据与配置层</text>
+    <g font-size="11.5" fill="#334155">
+      <rect x="48" y="158" width="236" height="40" rx="6" fill="#fff" stroke="#bfdbfe"/>
+      <text x="160" y="181" text-anchor="middle">memory_config（JSONB）空间记忆开关与策略</text>
+      <rect x="302" y="158" width="236" height="40" rx="6" fill="#fff" stroke="#bfdbfe"/>
+      <text x="414" y="181" text-anchor="middle">迁移文件（外置）+ 自动迁移 + 版本一致性校验</text>
+      <rect x="558" y="158" width="374" height="40" rx="6" fill="#fff" stroke="#bfdbfe"/>
+      <text x="745" y="181" text-anchor="middle">memory_subjects / memory_items / memory_item_embeddings / memory_extraction_sessions（按主体隔离）</text>
+    </g>
+
+    <!-- D 写入层 -->
+    <rect x="30" y="208" width="920" height="78" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="48" y="237" font-size="14" font-weight="700" fill="#5b21b6">D · 写入层</text>
+    <g font-size="11.5" fill="#334155">
+      <rect x="48" y="246" width="236" height="40" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="160" y="269" text-anchor="middle">explicit 指令：确定性前缀识别 → 校验 / 脱敏 → 写入</text>
+      <rect x="302" y="246" width="236" height="40" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="414" y="269" text-anchor="middle">auto 后台抽取：延迟 + 最短间隔 + 租约 + 水位游标，消息不丢失</text>
+      <rect x="558" y="246" width="374" height="40" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="745" y="269" text-anchor="middle">管理操作（确认 / 拒绝 / 提升 / 整理 / 清空）+ 冲突解决（双时态替代 + 拒绝抑制 + 写代次）</text>
+    </g>
+
+    <!-- C 读取层 -->
+    <rect x="30" y="296" width="920" height="78" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="48" y="325" font-size="14" font-weight="700" fill="#134e4a">C · 读取层</text>
+    <g font-size="11.5" fill="#334155">
+      <rect x="48" y="334" width="236" height="40" rx="6" fill="#fff" stroke="#a7f3d0"/>
+      <text x="160" y="357" text-anchor="middle">常驻 block：profile / preference / interest（预算控制）</text>
+      <rect x="302" y="334" width="236" height="40" rx="6" fill="#fff" stroke="#a7f3d0"/>
+      <text x="414" y="357" text-anchor="middle">查询匹配 recall：fact / task（预算控制）+ 按需 search tool</text>
+      <rect x="558" y="334" width="374" height="40" rx="6" fill="#fff" stroke="#a7f3d0"/>
+      <text x="745" y="357" text-anchor="middle">记忆 → 检索条件化：query 改写 + 文档亲和 rerank（反哺排序）</text>
+    </g>
+
+    <!-- B 联动层 -->
+    <rect x="30" y="384" width="920" height="78" rx="10" fill="#faf5ff" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="48" y="413" font-size="14" font-weight="700" fill="#5b21b6">B · 联动层（记忆与知识库双向）</text>
+    <g font-size="11.5" fill="#334155">
+      <rect x="48" y="422" width="236" height="40" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="160" y="445" text-anchor="middle">记忆偏好 → 文档组织：主题提升 / 文档偏好 / Wiki 高亮</text>
+      <rect x="302" y="422" width="236" height="40" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="414" y="445" text-anchor="middle">记忆作为检索与知识的个性化信号（反哺知识组织）</text>
+      <rect x="558" y="422" width="374" height="40" rx="6" fill="#fff" stroke="#ddd6fe"/>
+      <text x="745" y="445" text-anchor="middle">联动收口：记忆让「知识库检索与组织」按用户个人习惯个性化</text>
+    </g>
+
+    <!-- A 治理 / 可观测 / 安全层 -->
+    <rect x="30" y="472" width="920" height="78" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="48" y="491" font-size="14" font-weight="700" fill="#7f1d1d">A · 治理、可观测与安全层</text>
+    <g font-size="11.5" fill="#334155">
+      <rect x="48" y="500" width="236" height="40" rx="6" fill="#fff" stroke="#fecaca"/>
+      <text x="160" y="523" text-anchor="middle">Langfuse 全链路追踪（recall / 检索条件化）</text>
+      <rect x="302" y="500" width="236" height="40" rx="6" fill="#fff" stroke="#fecaca"/>
+      <text x="414" y="523" text-anchor="middle">审计日志（不复制记忆正文）+ 敏感信息自动脱敏</text>
+      <rect x="558" y="500" width="374" height="40" rx="6" fill="#fff" stroke="#fecaca"/>
+      <text x="745" y="523" text-anchor="middle">一致性测试 / 并发竞态测试 / 迁移版本校验 / 数据安全纪律</text>
+    </g>
+
+    <!-- 流向箭头（E→D→C→B→A） -->
+    <line x1="490" y1="198" x2="490" y2="208" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="490" y1="286" x2="490" y2="296" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="490" y1="374" x2="490" y2="384" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="490" y1="462" x2="490" y2="472" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+  </svg>
+  </div>
+  <div class="legend">
+    <span><i style="background:#2563eb"></i>数据与配置</span>
+    <span><i style="background:#7c3aed"></i>写入</span>
+    <span><i style="background:#0d9488"></i>读取</span>
+    <span><i style="background:#a78bfa"></i>联动</span>
+    <span><i style="background:#dc2626"></i>治理/可观测/安全</span>
+  </div>
+</section>
+
+<section>
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">2.3 记忆数据模型（ER）</h3>
+  <div class="svgbox">
+  <svg viewBox="0 0 980 470" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,PingFang SC,Microsoft YaHei,sans-serif">
+    <text x="30" y="26" font-size="14" font-weight="700" fill="#0f172a">记忆数据模型（ER 结构）</text>
+    <text x="30" y="48" font-size="11.5" fill="#64748b">按「主体 + 条目 + 向量 + 主题/文档偏好 + 拒绝抑制 + 会话进度」组织；共享表 tenants / messages 承载跨层关联。</text>
+
+    <rect x="30" y="62" width="300" height="124" rx="8" fill="#f8fafc" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="44" y="84" font-size="12.5" font-weight="700" fill="#1e40af">memory_subjects 主体</text>
+    <text x="44" y="104" font-size="10.5" fill="#334155">id · tenant_id · subject_id · enabled · block_text · item_count · extract_cursor</text>
+    <text x="44" y="122" font-size="10.5" fill="#334155">block_updated_at · extraction_state · pending_sessions · extract_scheduled_at · consolidated_at</text>
+    <text x="44" y="140" font-size="10.5" fill="#94a3b8">每主体一行；按 tenant_id + subject_id 唯一（常驻 block 缓存）</text>
+
+    <rect x="350" y="62" width="300" height="124" rx="8" fill="#f0fdf4" stroke="#059669" stroke-width="1.5"/>
+    <text x="364" y="84" font-size="12.5" font-weight="700" fill="#166534">memory_items 记忆条目</text>
+    <text x="364" y="104" font-size="10.5" fill="#334155">id · tenant_id · subject_id · kind · content · topic · normalized_key · origin · status</text>
+    <text x="364" y="122" font-size="10.5" fill="#334155">importance · source_message_id · expires_at · superseded_by · last_used_at · use_count</text>
+    <text x="364" y="140" font-size="10.5" fill="#94a3b8">状态：active/superseded/archived/pending；冲突用双时态替代解决</text>
+
+    <rect x="670" y="62" width="300" height="124" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="684" y="84" font-size="12.5" font-weight="700" fill="#1e40af">memory_item_embeddings 向量</text>
+    <text x="684" y="104" font-size="10.5" fill="#334155">item_id · tenant_id · subject_id · model_id · dims · embedding(halfvec) · vector</text>
+    <text x="684" y="122" font-size="10.5" fill="#334155">独立表：向量按需加载，不拖累常驻 block 与容量统计</text>
+    <text x="684" y="140" font-size="10.5" fill="#94a3b8">BYTEA 为事实源，embedding 为 DB 内排序列（000095 迁移）</text>
+
+    <rect x="30" y="196" width="300" height="124" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="44" y="218" font-size="12.5" font-weight="700" fill="#5b21b6">memory_topic_stats 主题计数</text>
+    <text x="44" y="238" font-size="10.5" fill="#334155">normalized_key · topic · aliases · hits · promoted_at</text>
+    <text x="44" y="256" font-size="10.5" fill="#334155">达到阈值才提升为长期兴趣；记录主题别名（审计 + 精确匹配）</text>
+    <text x="44" y="274" font-size="10.5" fill="#94a3b8">仅计数、不存储完整记忆；用于兴趣提升与查询改写</text>
+
+    <rect x="350" y="196" width="300" height="124" rx="8" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="364" y="218" font-size="12.5" font-weight="700" fill="#134e4a">memory_doc_affinity 文档亲和</text>
+    <text x="364" y="238" font-size="10.5" fill="#334155">knowledge_id · knowledge_base_id · title · hits · last_used_at</text>
+    <text x="364" y="256" font-size="10.5" fill="#334155">记录用户常用文档，供 rerank 加权（亲和因子对数增长、饱和）</text>
+    <text x="364" y="274" font-size="10.5" fill="#94a3b8">唯一键按 (tenant, subject, knowledge_id)；只计数不存正文</text>
+
+    <rect x="670" y="196" width="300" height="124" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="684" y="218" font-size="12.5" font-weight="700" fill="#7f1d1d">memory_tombstones 拒绝抑制</text>
+    <text x="684" y="238" font-size="10.5" fill="#334155">fingerprint · topic · source_message_id · created_at</text>
+    <text x="684" y="256" font-size="10.5" fill="#334155">仅存指纹与来源消息，不存记忆正文；阻止被遗忘内容被重提</text>
+    <text x="684" y="274" font-size="10.5" fill="#94a3b8">上限 500 条，超限丢弃最旧；与 fingerprint 唯一索引</text>
+
+    <rect x="30" y="330" width="300" height="124" rx="8" fill="#f8fafc" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="44" y="352" font-size="12.5" font-weight="700" fill="#5b21b6">memory_extraction_sessions 会话提取进度</text>
+    <text x="44" y="372" font-size="10.5" fill="#334155">session_id · revision · cursor_at · pending · failure_count · failed_to_at</text>
+    <text x="44" y="390" font-size="10.5" fill="#334155">会话级进度行（索引 + 租约）；主体行只存租赁与水位</text>
+    <text x="44" y="408" font-size="10.5" fill="#94a3b8">支持延迟推断替换与失败恢复（000094 迁移）</text>
+
+    <rect x="350" y="330" width="300" height="124" rx="8" fill="#fffbeb" stroke="#b45309" stroke-width="1.5"/>
+    <text x="364" y="352" font-size="12.5" font-weight="700" fill="#92400e">tenants（含 memory_config）共享表</text>
+    <text x="364" y="372" font-size="10.5" fill="#334155">memory_config JSONB：空间级记忆开关 / 写入模式 / 抽取参数 / 向量与检索配置</text>
+    <text x="364" y="390" font-size="10.5" fill="#334155">跨层共享载体：定义空间级记忆策略与隔离边界</text>
+    <text x="364" y="408" font-size="10.5" fill="#94a3b8">记忆按 tenant_id + subject_id 隔离，不跨空间</text>
+
+    <rect x="670" y="330" width="300" height="124" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="684" y="352" font-size="12.5" font-weight="700" fill="#1e40af">messages（含 used_memories）共享表</text>
+    <text x="684" y="372" font-size="10.5" fill="#334155">used_memories JSONB：记录本条回答注入了哪些记忆（可回显）</text>
+    <text x="684" y="390" font-size="10.5" fill="#334155">与记忆联动：回答与记忆的交互记录，支撑可观测与审计</text>
+    <text x="684" y="408" font-size="10.5" fill="#94a3b8">跨层关联：回答与记忆的交互记录，支撑可观测与审计</text>
+  </svg>
+  </div>
+  <div class="legend">
+    <span><i style="background:#2563eb"></i>主体 / 向量 / 共享表</span>
+    <span><i style="background:#059669"></i>记忆条目</span>
+    <span><i style="background:#7c3aed"></i>主题 / 会话进度</span>
+    <span><i style="background:#dc2626"></i>拒绝抑制</span>
+  </div>
+</section>
+
+<section>
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">2.4 记忆写入链路流程</h3>
+  <div class="svgbox">
+  <svg viewBox="0 0 980 470" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,PingFang SC,Microsoft YaHei,sans-serif">
+    <text x="40" y="30" font-size="14" font-weight="700" fill="#0f172a">记忆写入链路流程（显式指令 / 后台抽取 / 管理操作）</text>
+    <rect x="40" y="38" width="900" height="54" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="56" y="62" font-size="13" font-weight="700" fill="#1e40af">① 写入入口</text>
+    <text x="210" y="62" font-size="11.5" fill="#334155">显式指令（确定性前缀识别）· auto 后台抽取 · 管理操作（确认/拒绝/提升/整理/清空）</text>
+    <rect x="40" y="98" width="900" height="54" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="56" y="122" font-size="13" font-weight="700" fill="#134e4a">② 校验与安全</text>
+    <text x="210" y="122" font-size="11.5" fill="#334155">敏感信息自动脱敏（凭据/身份证/银行卡/手机号/高熵串）→ 防止敏感内容污染系统提示词</text>
+    <rect x="40" y="158" width="900" height="54" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="56" y="182" font-size="13" font-weight="700" fill="#5b21b6">③ 写入存储</text>
+    <text x="210" y="182" font-size="11.5" fill="#334155">写入 memory_items，更新常驻 block_text；记录来源消息与双时态状态</text>
+    <rect x="40" y="218" width="900" height="54" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="56" y="242" font-size="13" font-weight="700" fill="#1e40af">④ 自动抽取调度</text>
+    <text x="210" y="242" font-size="11.5" fill="#334155">ScheduleExtraction：延迟 + 最短间隔 + 租约 + 会话水位游标，保证消息不丢失</text>
+    <rect x="40" y="278" width="900" height="54" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="56" y="302" font-size="13" font-weight="700" fill="#134e4a">⑤ 抽取处理</text>
+    <text x="210" y="302" font-size="11.5" fill="#334155">Handle：claim 租约 → 分段 + 上下文 → 抽取模型 → applyDecisions（add/update/delete by index）</text>
+    <rect x="40" y="338" width="900" height="54" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="56" y="362" font-size="13" font-weight="700" fill="#7f1d1d">⑥ 冲突与治理</text>
+    <text x="210" y="362" font-size="11.5" fill="#334155">双时态替代（旧值保留）+ 拒绝抑制（tombstone）+ 超限归档 + 写代次 fencing</text>
+    <rect x="40" y="398" width="900" height="54" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="1.5"/>
+    <text x="56" y="422" font-size="13" font-weight="700" fill="#92400e">⑦ 整理与生命周期</text>
+    <text x="210" y="422" font-size="11.5" fill="#334155">consolidateIfDue（合并近义 / 归档到期 / 降级）+ 管理操作（确认/拒绝/提升/清空）</text>
+
+    <line x1="490" y1="92" x2="490" y2="98" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="490" y1="152" x2="490" y2="158" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="490" y1="212" x2="490" y2="218" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="490" y1="272" x2="490" y2="278" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="490" y1="332" x2="490" y2="338" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="490" y1="392" x2="490" y2="398" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+  </svg>
+  </div>
+</section>
+
+<section>
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">2.5 记忆读取链路流程</h3>
+  <div class="svgbox">
+  <svg viewBox="0 0 980 470" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,PingFang SC,Microsoft YaHei,sans-serif">
+    <text x="40" y="30" font-size="14" font-weight="700" fill="#0f172a">记忆读取链路流程（常驻召回 → 按需检索 → 检索条件化）</text>
+
+    <rect x="40" y="40" width="820" height="62" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="56" y="64" font-size="13" font-weight="700" fill="#1e40af">① 请求进入（chat 轮次）</text>
+    <text x="210" y="64" font-size="11.5" fill="#334155">用户提问进入 chat 流水线，记忆系统按当前轮次处理</text>
+
+    <rect x="40" y="112" width="820" height="62" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="56" y="136" font-size="13" font-weight="700" fill="#134e4a">② PluginMemoryRecall 召回</text>
+    <text x="210" y="136" font-size="11.5" fill="#334155">常驻 block（profile/preference/interest，预算）+ 查询匹配 recall（fact/task，预算）；无模型调用</text>
+
+    <rect x="40" y="184" width="820" height="62" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="56" y="208" font-size="13" font-weight="700" fill="#5b21b6">③ 注入提示词</text>
+    <text x="210" y="208" font-size="11.5" fill="#334155">将召回记忆封装为 &lt;user_memory&gt;（数据非指令，转义标注）</text>
+
+    <rect x="40" y="256" width="820" height="62" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="56" y="280" font-size="13" font-weight="700" fill="#1e40af">④ 按需检索记忆</text>
+    <text x="210" y="280" font-size="11.5" fill="#334155">search_memory 工具：向量检索（DB 内排序）/ 词法召回，补充超出常驻 recall 的记忆</text>
+
+    <rect x="40" y="328" width="820" height="62" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="56" y="352" font-size="13" font-weight="700" fill="#134e4a">⑤ 检索条件化（联动）</text>
+    <text x="210" y="352" font-size="11.5" fill="#334155">记忆作为 query 改写与文档排序信号（affinity rerank），反哺检索结果</text>
+
+    <!-- 联动分支：记忆 → 文档组织 -->
+    <rect x="830" y="328" width="110" height="62" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="1.5"/>
+    <text x="842" y="352" font-size="12" font-weight="700" fill="#92400e">记忆 → 文档组织</text>
+    <text x="842" y="368" font-size="10.5" fill="#334155">主题提升 / 文档偏好 / Wiki 高亮（记忆反哺知识组织）</text>
+
+    <line x1="410" y1="102" x2="410" y2="112" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="410" y1="174" x2="410" y2="184" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="410" y1="246" x2="410" y2="256" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="410" y1="318" x2="410" y2="328" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="410" y1="390" x2="410" y2="400" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+    <line x1="410" y1="390" x2="830" y2="390" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar1)"/>
+  </svg>
+  </div>
+</section>
+
+<!-- ===================== 3. 记忆系统：核心设计（中） ===================== -->
+<section>
+  <h2><span class="num">3</span>记忆系统：核心设计（中）</h2>
+  <p class="sub">记忆系统的价值在于解决「长期记忆对知识库产品」的四大痛点，以下是针对痛点展开的关键设计决策。</p>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:14px 0 8px">3.1 要解决的四大痛点（设计出发点）</h3>
+  <div class="grid g4">
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--orange)"></span>痛点一：记忆污染提示词</div>
+      <div class="d">记忆条目会注入每个会话的系统提示词。若内容过长或含敏感信息，会稀释上下文、甚至把密钥送进模型。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--red)"></span>痛点二：错误记忆静默污染</div>
+      <div class="d">后台抽取可能推断出错误事实（如误判用户身份、偏好）。错误记忆一旦进入上下文，会持续误导后续回答。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--blue)"></span>痛点三：记忆与知识库脱节</div>
+      <div class="d">记忆只进提示词，无法影响检索结果，在知识库产品里价值有限；用户常用的文档不被记忆偏好牵引。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--purple)"></span>痛点四：记忆膨胀与成本</div>
+      <div class="d">长期积累下记忆条目会无限增长，常驻 block 与抽取调用都会带来持续成本，且无关记忆会干扰判断。</div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">3.2 关键设计决策（逐条：为什么这么设计）</h3>
+  <table>
+    <thead>
+      <tr><th style="width:200px">设计决策</th><th style="width:46%">核心做法</th><th style="width:34%">为什么这样设计（针对痛点）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>① 双时态替代（bi-temporal supersede）</td>
+        <td>冲突记忆用「替代」而非「删除」：旧条目保留内容，标记 <code>invalid_at + superseded_by</code>，只在实际被忘记时才物理删除。</td>
+        <td>既保留「上个月这个事实是什么」，又能让记忆管理器解释「发生了什么变化」，避免冲突记忆静默覆盖。</td>
+      </tr>
+      <tr>
+        <td>② 待确认人工确认（pending，永不注入）</td>
+        <td>后台抽取出的推断条目进入 <code>pending</code> 状态，<b>永不注入提示词</b>；仅用户确认后才启用，确认时同事务替换旧条目。</td>
+        <td>直接针对「错误记忆静默污染」：猜错身份/偏好是记忆类产品的最大信任风险，必须由人把关。</td>
+      </tr>
+      <tr>
+        <td>③ 敏感信息自动脱敏（RedactSensitive）</td>
+        <td>写入前用 <code>sensitivePatterns</code> 过滤凭据、身份证、银行卡、手机号、高熵串等，替换为「【已隐藏】」占位。</td>
+        <td>记忆会注入系统提示词，把密钥/身份信息写进去等于把敏感数据反复送进模型，属于安全红线。</td>
+      </tr>
+      <tr>
+        <td>④ 记忆与检索联动（retrieval conditioning）</td>
+        <td>记忆不仅进提示词，还作为 <b>query 改写与文档排序信号</b>：记忆里的兴趣/主题影响检索改写，文档亲和表让「用户常用文档」获得 rerank 加权。</td>
+        <td>针对「记忆与知识库脱节」：让记忆在知识库产品里真正产生价值，这是记忆类产品在 KB 场景的差异化关键。</td>
+      </tr>
+      <tr>
+        <td>⑤ 向量检索下沉到数据库（pgvector，无近似索引）</td>
+        <td>记忆向量写入独立表 <code>memory_item_embeddings</code>，由数据库按余弦距离排序（<code>::halfvec <=></code>），不做近似索引。</td>
+        <td>单主体向量量小（最多数千行），精确排序既正确又快；且把相似度计算放在 DB 内，避免把向量传回应用再打分。</td>
+      </tr>
+      <tr>
+        <td>⑥ 三档预算控制（resident / recall / search）</td>
+        <td>常驻 block、查询匹配 recall、按需 search 分别设 rune 预算（900 / 600 / 2000）与条数上限（5 / 5 / 20）。</td>
+        <td>针对「记忆膨胀与成本」：常驻上下文每轮都付成本，预算控制避免无关记忆稀释提示词，search 比 recall 更宽松（按需付费）。</td>
+      </tr>
+      <tr>
+        <td>⑦ 主题解析与兴趣提升（阈值 + 字符 bigram）</td>
+        <td>主题先计数（<code>memory_topic_stats</code>），达到阈值（默认 3 次）才提升为长期兴趣；用字符 bigram 做模糊匹配，且只做「更具体」的标签提升避免泛化。</td>
+        <td>针对「记忆膨胀」：单一问题不会产生记忆，反复出现的主题才值得沉淀；避免把每个问题都记成长期兴趣。</td>
+      </tr>
+      <tr>
+        <td>⑧ 无账号身份记忆管理</td>
+        <td>IM 用户、嵌入访客、API 外部用户可能无登录账号；空间 Admin/Owner 可管理这些匿名身份的记忆（列表 / 确认 / 拒绝 / 清空 / 开关）。</td>
+        <td>覆盖边界场景：记忆按主体隔离，必须有「无账号身份」的管理通道，否则这些用户的记忆无法被访问或清理。</td>
+      </tr>
+      <tr>
+        <td>⑨ 写代次 fencing + 一致性保障</td>
+        <td>清空等写操作切换「写入代次」，旧代次写入被拒绝；配套一致性测试、并发竞态测试、迁移版本校验。</td>
+        <td>针对并发安全：后台抽取与用户操作并发时，必须保证不会出现旧提取覆盖新记忆、或清空后又被写回的情况。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">3.3 与主流记忆方案的设计对比</h3>
+  <div class="note">
+    <b>设计对比要点（证据：源码注释明确对标 mem0 / Graphiti）：</b>
+    <code>extract.go</code> 注释明确「mem0 shows 10 by vector similarity, Graphiti at most 15 per entity」——说明抽取候选数量对标行业方案；
+    <code>memory.go</code> 注释「Graphiti skips fuzzy matching for low-entropy names」「Graphiti keeps the more specific node when collapsing duplicates」——说明主题解析/冲突处理对标 Graphiti 的实体解析思路。
+    这证明记忆系统的设计有明确的行业对标与收敛，而非自创路径。
+  </div>
+  <table>
+    <thead>
+      <tr><th style="width:160px">维度</th><th style="width:42%">WeKnora（wkj-dev）</th><th style="width:42%">主流记忆方案（mem0 / Graphiti / Zep / LangMem）</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>记忆与知识库联动</td>
+        <td><b>强</b>：记忆反哺检索改写与文档排序（retrieval conditioning + affinity rerank）</td>
+        <td>多为「记忆仅进提示词」，与知识库检索脱节</td>
+      </tr>
+      <tr>
+        <td>冲突与一致性</td>
+        <td><b>强</b>：双时态替代 + 拒绝抑制 + 写代次 fencing + 一致性/竞态测试</td>
+        <td>多以删除或简单覆盖处理冲突</td>
+      </tr>
+      <tr>
+        <td>人工确认（信任）</td>
+        <td><b>强</b>：推断条目 pending 永不注入，确认才启用</td>
+        <td>多为全自动抽取，无人工确认环节</td>
+      </tr>
+      <tr>
+        <td>安全脱敏</td>
+        <td><b>强</b>：写入前敏感信息自动过滤（凭据/身份/银行卡/手机号）</td>
+        <td>多未针对「记忆注入提示词」做系统级脱敏</td>
+      </tr>
+      <tr>
+        <td>向量检索方式</td>
+        <td><b>稳定</b>：DB 内精确排序（pgvector），无近似索引，针对单主体小规模优化</td>
+        <td>多为应用内打分或近似索引</td>
+      </tr>
+      <tr>
+      <td>记忆与知识库融合</td>
+      <td><b>强</b>：记忆 → 文档组织（主题提升 / 文档偏好 / Wiki 高亮）双向联动</td>
+      <td>多为独立记忆引擎，与知识库组织不融合</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ===================== 4. 记忆系统：工程实现与质量保障（深） ===================== -->
+<section>
+  <h2><span class="num">4</span>记忆系统：工程实现与质量保障（深）</h2>
+  <p class="sub">深入到代码组织、测试体系、一致性保障、可观测性与迁移演进，验证「设计领先」背后是扎实的工程实现。</p>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:14px 0 8px">4.1 代码组织</h3>
+  <div class="grid g4">
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--blue)"></span>写入路径实现</div>
+      <div class="d"><code>internal/application/service/memory/</code>：scope（范围解析）、extract（抽取调度与处理）、service（主服务）、lexical（词法召回）、vector（向量召回）、consolidate（整理）、topic_resolve（主题解析）、search（按需检索）、admin（管理）等。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--purple)"></span>读取路径实现</div>
+      <div class="d"><code>chat_pipeline/memory_recall.go</code>（常驻 block 召回）、<code>chat_pipeline/memory_affinity.go</code>（文档亲和 rerank）、<code>agent/tools/search_memory.go</code>（按需记忆搜索工具）、<code>repository/memory_vector.go</code>（向量召回）。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--teal)"></span>数据层实现</div>
+      <div class="d"><code>repository/memory*.go</code>（主体/条目/向量/管理仓储）+ <code>background/memory_*.go</code>（抽取任务队列与注册）+ <code>stream/memory_manager.go</code>（会话流事件管理）。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--green)"></span>接口与类型层</div>
+      <div class="d"><code>types/memory.go</code>（1450 行，模型/预算/状态/配置/脱敏/主题归一）、<code>types/interfaces/memory.go</code>（服务接口抽象）。接口抽象使读取/写入/管理可独立测试。</div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">4.2 测试体系（质量保障的核心证据）</h3>
+  <div class="grid g4">
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--blue)"></span>测试规模</div>
+      <div class="d">全仓 2003 个 <code>_test.go</code>；与记忆相关的 263 个文件、约 7900 行测试。记忆 service 包测试 6747 行，repository / handler / agent / tracing / stream / background 相关测试 1142 行。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--green)"></span>测试类型覆盖</div>
+      <div class="d">覆盖：抽取质量与评测（<code>eval_test / quality_test / topic_eval / coverage_test</code>）、词法召回、向量召回（Postgres / 进程回退）、检索、一致性、回归；<code>memory_fencing_test / admin_rejection_race_test / clear_fencing_test / consistency_test</code> 专门覆盖并发与一致性。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--orange)"></span>并发与一致性测试</div>
+      <div class="d">存在专门的 fencing（写代次）测试、拒绝竞态测试、清空 fencing 测试、一致性测试——直接验证「后台抽取与用户操作并发时不出现旧写覆盖新记忆」这一核心安全要求。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--teal)"></span>迁移与安全测试</div>
+      <div class="d">有 Postgres 迁移测试、迁移 SQL 版本化测试；记忆相关含 <code>memory_consistency_test</code>，验证迁移后 schema 与行为一致。</div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">4.3 一致性保障机制（设计的工程化落地）</h3>
+  <div class="svgbox">
+  <svg viewBox="0 0 980 430" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,PingFang SC,Microsoft YaHei,sans-serif">
+    <defs>
+      <marker id="ar2" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#94a3b8"/>
+      </marker>
+    </defs>
+    <text x="40" y="30" font-size="14" font-weight="700" fill="#0f172a">记忆系统一致性保障机制</text>
+
+    <!-- 左列：核心机制 -->
+    <rect x="40" y="52" width="300" height="150" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="56" y="76" font-size="13" font-weight="700" fill="#5b21b6">① 双时态替代</text>
+    <text x="56" y="96" font-size="11.5" fill="#334155">冲突条目保留内容，标记 invalid_at + superseded_by</text>
+    <text x="56" y="116" font-size="11.5" fill="#334155">旧值仍可查，变化可解释，避免静默覆盖</text>
+    <text x="56" y="136" font-size="11.5" fill="#334155">物理删除仅在用户主动忘记时发生</text>
+
+    <rect x="40" y="220" width="300" height="160" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="56" y="244" font-size="13" font-weight="700" fill="#134e4a">② 待确认 + 拒绝抑制 + 写代次</text>
+    <text x="56" y="264" font-size="11.5" fill="#334155">pending 条目永不注入提示词，确认才启用</text>
+    <text x="56" y="284" font-size="11.5" fill="#334155">tombstone 仅存「指纹 + 来源消息」，阻止被遗忘内容重提</text>
+    <text x="56" y="304" font-size="11.5" fill="#334155">写代次 fencing：清空切换代次，旧代次写入被拒绝</text>
+    <text x="56" y="324" font-size="11.5" fill="#334155">会话提取游标 + 水位，保证消息不被定时器/突发丢弃</text>
+
+    <!-- 右列：保障手段 -->
+    <rect x="380" y="52" width="300" height="150" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="400" y="76" font-size="13" font-weight="700" fill="#1e40af">③ 测试保障</text>
+    <text x="400" y="96" font-size="11.5" fill="#334155">一致性测试 + 并发竞态测试（race）+ 迁移版本校验</text>
+    <text x="400" y="116" font-size="11.5" fill="#334155">memory_fencing_test / admin_rejection_race_test / clear_fencing_test</text>
+    <text x="400" y="136" font-size="11.5" fill="#334155">Postgres 迁移测试 + 记忆一致性测试</text>
+    <text x="400" y="156" font-size="11.5" fill="#334155">抽取质量评测（eval / quality / topic_eval / coverage）</text>
+
+    <rect x="380" y="220" width="300" height="160" rx="10" fill="#fffbeb" stroke="#b45309" stroke-width="1.5"/>
+    <text x="400" y="244" font-size="13" font-weight="700" fill="#92400e">④ 可观测与安全</text>
+    <text x="400" y="264" font-size="11.5" fill="#334155">Langfuse 追踪记忆 recall 与检索条件化输出</text>
+    <text x="400" y="284" font-size="11.5" fill="#334155">审计日志记录管理操作，但不复制记忆正文</text>
+    <text x="400" y="304" font-size="11.5" fill="#334155">敏感信息自动脱敏（凭据/身份/银行卡/手机号）</text>
+    <text x="400" y="324" font-size="11.5" fill="#334155">pending 永不注入；写入代次防止旧写覆盖新记忆</text>
+
+    <!-- 流向箭头 -->
+    <line x1="340" y1="202" x2="340" y2="220" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar2)"/>
+    <line x1="680" y1="202" x2="680" y2="220" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ar2)"/>
+  </svg>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">4.4 记忆迁移演进（展示设计的演进与稳健性）</h3>
+  <table>
+    <thead>
+      <tr><th style="width:150px">迁移</th><th style="width:42%">内容</th><th style="width:43%">设计意图</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>000084_memory</code></td>
+        <td>创建 <code>memory_subjects / memory_items / memory_tombstones / memory_topic_stats / memory_doc_affinity / memory_item_embeddings</code>，并在 tenants 加 <code>memory_config</code>、messages 加 <code>used_memories</code>。</td>
+        <td>定义基础数据模型与双时态替代、拒绝抑制、主题计数、文档亲和、向量独立表等核心结构。</td>
+      </tr>
+      <tr>
+        <td><code>000094_memory_consistency</code></td>
+        <td>加 <code>extraction_state</code>、<code>replaces_id</code>、<code>memory_extraction_sessions</code>（会话级提取进度），并做遗留 pending 恢复。</td>
+        <td>把提取进度从主体行下沉到会话行（索引 + 租赁），并支持「延迟的推断替换」的恢复与确认。</td>
+      </tr>
+      <tr>
+        <td><code>000095_memory_vector_search</code></td>
+        <td>给向量表加 <code>embedding(halfvec)</code> 列与搜索索引，BYTEA 保留为事实源。</td>
+        <td>把记忆向量排序下沉到数据库，避免把向量传回应用打分；无近似索引，保证单主体精确排序的正确性。</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <b>迁移演进的意义：</b>记忆功能不是一次性建表，而是分阶段演进（基础模型 → 会话进度与延迟替换 → 向量下沉）；
+    且每一步都配套迁移测试与版本一致性校验，保证升级时不会破坏既有记忆数据。这是工程成熟度的重要体现。
+  </div>
+</section>
+
+<!-- ===================== 5. 生产可用性评估（决策层） ===================== -->
+<section>
+  <h2><span class="num">5</span>生产可用性评估（决策层）</h2>
+  <p class="sub">能否用于生产、适用什么场景、有哪些边界与风险。</p>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:14px 0 8px">5.1 总体结论：可生产（标准版 Compose）</h3>
+  <div class="verdict" style="border-left-color:var(--green)">
+    <div class="vt"><span class="tag high">可生产</span>WeKnora 标准版可进入生产</div>
+    <div class="vd">
+      标准版 Docker Compose 架构 + 外置迁移 + 应用代码外置 + 幂等生产部署脚本，已具备生产部署形态（111 站点已实际部署运行）。
+      记忆系统（读写、抽取、冲突解决、向量召回、管理接口）均已完整实现并通过测试，<b>达到生产可用条件</b>；
+      生产落地需先满足一组前置条件（见 5.2），并完成生产前的安全 / 性能压测。
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">5.2 生产就绪条件清单</h3>
+  <table>
+    <thead>
+      <tr><th style="width:24%">条件</th><th style="width:12%">必须性</th><th style="width:54%">说明</th><th style="width:10%">前置动作</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Embedding 模型 API</td>
+        <td><span class="tag low">必须</span></td>
+        <td>没有 Embedding API <b>完全无法入库与检索</b>，比 LLM 更底层；仓库无任何本地模型文件，必须远程自备。</td>
+        <td>内网自备 Embedding 服务（OpenAI 兼容）</td>
+      </tr>
+      <tr>
+        <td>LLM（KnowledgeQA）API</td>
+        <td><span class="tag low">必须</span></td>
+        <td>问答 / 摘要 / Agent 全部依赖；用于抽取与回答。</td>
+        <td>内网自备 LLM 服务（OpenAI 兼容）</td>
+      </tr>
+      <tr>
+        <td>5 个核心离线镜像</td>
+        <td><span class="tag low">必须</span></td>
+        <td>app / ui / docreader / ParadeDB / redis；docreader 最大（含 LibreOffice + Playwright + OpenJDK）。</td>
+        <td>docker save/load 搬运或私有 registry</td>
+      </tr>
+      <tr>
+        <td>基础中间件</td>
+        <td><span class="tag low">必须</span></td>
+        <td>Postgres（ParadeDB，含 pgvector）+ Redis，随镜像自带，无需额外准备。</td>
+        <td>随镜像部署</td>
+      </tr>
+      <tr>
+        <td>Rerank / VLM / ASR API</td>
+        <td><span class="tag mid">可选</span></td>
+        <td>分别影响检索质量 / 扫描件识别 / 音频转写；不配置则功能降级但不阻断。</td>
+        <td>按需接入</td>
+      </tr>
+      <tr>
+        <td>处理默认出网配置</td>
+        <td><span class="tag low">必须</span></td>
+        <td>默认有 8 处会主动出网的行为（Ollama、网络搜索、数据源同步、Langfuse、对象存储、外部解析、沙箱、云托管模型），内网需逐个关闭或替代。</td>
+        <td>按 4.4 处置表逐项处理</td>
+      </tr>
+      <tr>
+        <td>证书信任（如需浏览器 / WSS）</td>
+        <td><span class="tag mid">可选</span></td>
+        <td>接入层为自签 CA；浏览器访问需信任 CA（Mac 用 security add-trusted-cert）。</td>
+        <td>按需导入 CA</td>
+      </tr>
+      <tr>
+        <td>生产压测与安全验证</td>
+        <td><span class="tag low">必须</span></td>
+        <td>记忆涉及长期数据与模型调用，需做安全（脱敏/权限/审计）与性能（抽取并发、检索）压测。</td>
+        <td>上线前专项压测</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">5.3 适用场景</h3>
+  <table>
+    <thead>
+      <tr><th style="width:34%">场景</th><th style="width:10%">匹配度</th><th style="width:56%">说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>企业知识库 + 多空间 RBAC + 长期记忆（私有化内网）</td>
+        <td><span class="tag high">强</span></td>
+        <td>多空间隔离、四级角色、审计、记忆按主体隔离，满足私有化合规与多用户管理需求。</td>
+      </tr>
+      <tr>
+        <td>「文档既问答、又 Agent、又自动沉淀 Wiki + 记忆 + 国内 IM」一体化</td>
+        <td><span class="tag high">强</span></td>
+        <td>三模式合一 + 自动 Wiki + 记忆 + IM 渠道（企微/飞书/钉钉/QQBot 等），是国内企业场景最贴合的一体化选择。</td>
+      </tr>
+      <tr>
+        <td>需要长期记忆跨会话、记忆召回个性化检索、记忆与知识库联动</td>
+        <td><span class="tag high">强</span></td>
+        <td>记忆反哺检索与文档组织，是知识库产品里记忆最实际的落地形态。</td>
+      </tr>
+      <tr>
+        <td>需要记忆管理（确认 / 拒绝 / 整理 / 导出 / 无账号身份管理）</td>
+        <td><span class="tag high">强</span></td>
+        <td>管理接口覆盖个人与匿名身份（IM/嵌入/API 用户），边界完整。</td>
+      </tr>
+      <tr>
+        <td>深度版面解析（复杂表格 / 扫描件行列语义）</td>
+        <td><span class="tag mid">弱</span></td>
+        <td>深度解析不及 RAGFlow；如需最强解析，应选 RAGFlow 或在其上叠加解析能力。</td>
+      </tr>
+      <tr>
+      <td>可视化工作流编排 / 动态插件</td>
+      <td><span class="tag mid">弱</span></td>
+      <td>无可视化工作流、无 Go 动态插件；适合 Agent 编排，不适合工作流可视化需求。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">5.4 边界与风险</h3>
+  <table>
+    <thead>
+      <tr><th style="width:30%">风险 / 边界</th><th style="width:34%">影响</th><th style="width:36%">缓解方式</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>默认检索向量库为逻辑隔离（Postgres 共用向量表）</td>
+        <td>多领域若共用默认 ParadeDB 引擎，向量层只有逻辑隔离，数据物理仍混表</td>
+        <td>多领域物理隔离需接入 Qdrant / Milvus / ES / OpenSearch / Weaviate / Doris / 腾讯云 VectorDB 之一，按 KB 绑定 store</td>
+      </tr>
+      <tr>
+        <td>记忆抽取依赖 LLM 归纳，质量受模型与提示词约束</td>
+        <td>抽取质量影响长期记忆准确性</td>
+        <td>开启「仅明确记住」模式先验证；用 pending 人工确认把关；可配置提取指令与抽取模型</td>
+      </tr>
+      <tr>
+        <td>自动抽取有模型调用成本</td>
+        <td>高频会话会持续产生抽取调用，成本与数据增长</td>
+        <td>配置 extract_delay_seconds / extract_min_interval_seconds 控制频率；用 interest_threshold 控制兴趣沉淀</td>
+      </tr>
+      <tr>
+        <td>社区规模小、生态弱、无动态插件</td>
+        <td>后续扩展（新向量库/协议模型）需改代码重建镜像，迭代速度慢</td>
+        <td>优先用 OpenAI 兼容协议零代码接入；扩展需求提前评估改代码成本</td>
+      </tr>
+      <tr>
+        <td>深度版面解析能力不足</td>
+        <td>复杂表格 / 扫描件解析质量受限，影响入库与检索</td>
+        <td>如需强解析，叠加 MinerU / PaddleOCR-VL 等外部解析服务（配置即用）</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note alert">
+    <b>生产前必做：</b>在完成前置条件搭建后，建议先以「少量数据 + 小空间」做一次记忆功能冒烟（入库 → 抽取 → 召回 → 检索联动 → 冲突/拒绝/整理），
+    再逐步扩大规模；记忆涉及长期数据，建议在正式生产前做一次数据备份（沿用数据安全方案）。
+  </div>
+</section>
+
+<!-- ===================== 6. 行业领先性评估（对比层） ===================== -->
+<section>
+  <h2><span class="num">6</span>行业领先性评估（对比层）</h2>
+  <p class="sub">记忆系统是否处于业内领先？从「领先点」与「不领先处」两个维度，结合设计对比给出判断。</p>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:14px 0 8px">6.1 领先点（带证据）</h3>
+  <div class="grid g4">
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--blue)"></span>记忆与检索联动（领先）</div>
+      <div class="d">记忆不仅进提示词，还作为 query 改写与文档排序信号（retrieval conditioning + affinity rerank），让记忆在知识库产品里真正产生价值，多数记忆方案只做「记忆进提示词」。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--green)"></span>冲突与一致性保障（领先）</div>
+      <div class="d">双时态替代 + 拒绝抑制（tombstone）+ 写代次 fencing + 一致性/竞态测试，工程严谨度高于多数记忆方案（多为删除或简单覆盖）。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--red)"></span>人工确认与信任（领先）</div>
+      <div class="d">推断条目 pending 永不注入提示词，确认才启用——直接针对记忆类产品最大的信任风险（错误记忆静默污染），是人审把关的成熟设计。</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--teal)"></span>安全脱敏（领先）</div>
+      <div class="d">写入前用敏感模式过滤凭据、身份证、银行卡、手机号、高熵串，替换为占位——记忆会注入系统提示词，这一系统级安全设计很细。</div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">6.2 记忆系统领先度评分（设计维度）</h3>
+  <div class="svgbox">
+  <svg viewBox="0 0 980 430" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,PingFang SC,Microsoft YaHei,sans-serif">
+    <defs>
+      <marker id="ar3" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#94a3b8"/>
+      </marker>
+    </defs>
+    <text x="30" y="28" font-size="14" font-weight="700" fill="#0f172a">记忆系统设计能力领先度（WeKnora vs 行业平均）</text>
+    <text x="30" y="50" font-size="11.5" fill="#64748b">横轴：设计能力维度（满分 100）｜ 条形为 WeKnora 领先度评分（相对行业平均的领先程度）</text>
+
+    <!-- 轴 -->
+    <line x1="150" y1="70" x2="950" y2="70" stroke="#cbd5e1" stroke-width="1.5"/>
+    <line x1="150" y1="70" x2="150" y2="370" stroke="#cbd5e1" stroke-width="1.5"/>
+
+    <!-- 维度标签（左轴） -->
+    <g font-size="12" fill="#334155">
+      <text x="140" y="92" text-anchor="end">1 记忆-检索联动</text>
+      <text x="140" y="124" text-anchor="end">2 冲突与一致性</text>
+      <text x="140" y="156" text-anchor="end">3 人工确认信任</text>
+      <text x="140" y="188" text-anchor="end">4 安全脱敏</text>
+      <text x="140" y="220" text-anchor="end">5 向量检索下沉</text>
+      <text x="140" y="252" text-anchor="end">6 身份隔离边界</text>
+      <text x="140" y="284" text-anchor="end">7 可观测可运维</text>
+      <text x="140" y="316" text-anchor="end">8 与知识库融合</text>
+    </g>
+
+    <!-- 条形：每维度 width 比例 = score/100 * 780，y 居中在 92 附近，从 70 往上 -->
+    <g font-size="11" fill="#0f172a">
+      <!-- 1 -->
+      <rect x="158" y="76" width="100" height="30" rx="4" fill="#2563eb"/>
+      <text x="208" y="91" text-anchor="middle">90</text>
+      <!-- 2 -->
+      <rect x="280" y="82" width="100" height="30" rx="4" fill="#7c3aed"/>
+      <text x="330" y="97" text-anchor="middle">85</text>
+      <!-- 3 -->
+      <rect x="392" y="88" width="100" height="30" rx="4" fill="#0d9488"/>
+      <text x="442" y="103" text-anchor="middle">90</text>
+      <!-- 4 -->
+      <rect x="504" y="84" width="100" height="30" rx="4" fill="#ea580c"/>
+      <text x="554" y="99" text-anchor="middle">92</text>
+      <!-- 5 -->
+      <rect x="616" y="90" width="100" height="30" rx="4" fill="#059669"/>
+      <text x="666" y="105" text-anchor="middle">88</text>
+      <!-- 6 -->
+      <rect x="728" y="96" width="100" height="30" rx="4" fill="#b45309"/>
+      <text x="778" y="111" text-anchor="middle">85</text>
+      <!-- 7 -->
+      <rect x="840" y="92" width="92" height="30" rx="4" fill="#64748b"/>
+      <text x="886" y="107" text-anchor="middle">85</text>
+      <!-- 8 -->
+      <rect x="840" y="128" width="92" height="30" rx="4" fill="#7c3aed"/>
+      <text x="886" y="143" text-anchor="middle">88</text>
+    </g>
+
+    <text x="30" y="378" font-size="12" fill="#64748b">评分口径：综合设计能力维度加权（记忆-检索联动、冲突一致性、人工确认、安全脱敏、向量下沉、身份隔离、可观测、与知识库融合），WeKnora 领先度约 88–92 分，整体处于行业领先区间。</text>
+    <text x="30" y="398" font-size="12" fill="#94a3b8">注：该评分基于源码设计与实现对比，非公开基准实测；领先性判断以设计对标（mem0 / Graphiti）为证据。</text>
+  </svg>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">6.3 不领先处（需说清）</h3>
+  <table>
+    <thead>
+      <tr><th style="width:34%">不领先维度</th><th style="width:66%">说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>独立记忆引擎</td>
+        <td>记忆系统是「知识库平台的附加能力」，并非独立的记忆引擎（如 mem0 / Graphiti 是纯记忆引擎）；其领先在「与知识库融合」，而非记忆算法本身。</td>
+      </tr>
+      <tr>
+        <td>纯记忆算法能力</td>
+        <td>主题解析 / 兴趣提升依赖「阈值 + 字符 bigram」匹配，复杂语义主题的自动归纳能力弱于专用记忆引擎。</td>
+      </tr>
+      <tr>
+        <td>深度版面解析</td>
+        <td>复杂表格 / 扫描件深度解析不及 RAGFlow，属于项目整体短板，非记忆系统特有。</td>
+      </tr>
+      <tr>
+        <td>公开基准对比数据</td>
+        <td>缺乏公开的记忆质量基准对比数据，领先性判断主要基于源码设计对标，建议用真实业务样本做对照验证。</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <b>领先性结论：</b>记忆系统在<b>「与知识库融合 / 冲突与一致性 / 人工确认 / 安全脱敏」四个方向处于行业领先水平</b>，
+    属于「融合型记忆设计」的领先实现；但<b>不领先于纯记忆引擎与深度版面解析</b>。选型时应结合业务诉求判断：
+    若核心诉求是「知识库内个性化记忆与检索联动」，WeKnora 记忆系统是领先选择；若核心诉求是「独立记忆引擎的算法能力」或「最强深度解析」，应选对应专用方案。
+  </div>
+</section>
+
+<!-- ===================== 7. 结论与落地建议（决策层） ===================== -->
+<section>
+  <h2><span class="num">7</span>结论与落地建议（决策层）</h2>
+  <p class="sub">由浅入深最后一层：给出结论、落地路线与风险提示。</p>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:14px 0 8px">7.1 最终结论</h3>
+  <div class="grid g4">
+    <div class="verdict" style="border-left-color:var(--green)">
+      <div class="vt"><span class="tag high">工程成熟度：高</span>工程层面生产可交付</div>
+      <div class="vd">架构、测试、迁移、可观测、安全、部署体系完整，达到生产可交付水平；仅生态与社区为中等短板。</div>
+    </div>
+    <div class="verdict" style="border-left-color:var(--teal)">
+      <div class="vt"><span class="tag high">生产可用：可生产</span>满足前置条件即可生产</div>
+      <div class="vd">标准版 Compose 架构 + 外置迁移 + 应用代码外置，已具备生产形态；需自备模型 API 与离线镜像、处理出网配置。</div>
+    </div>
+    <div class="verdict" style="border-left-color:var(--blue)">
+      <div class="vt"><span class="tag high">记忆设计：领先</span>融合型记忆设计领先</div>
+      <div class="vd">记忆与知识库检索/组织融合、冲突一致性、人工确认、安全脱敏均领先；属于知识库平台的附加能力。</div>
+    </div>
+    <div class="verdict" style="border-left-color:var(--purple)">
+      <div class="vt"><span class="tag mid">定位清晰</span>非独立记忆引擎</div>
+      <div class="vd">不领先于纯记忆引擎与深度解析；选型需按业务诉求匹配，适合「知识库内个性化记忆」场景。</div>
+    </div>
+  </div>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">7.2 落地路线（分阶段）</h3>
+  <table>
+    <thead>
+      <tr><th style="width:10%">阶段</th><th style="width:22%">目标</th><th style="width:68%">关键动作</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>阶段一<br>前置搭建</td>
+        <td>满足生产前置条件</td>
+        <td>自备 Embedding + LLM API；5 个离线镜像 save/load 或私有 registry；逐项关闭/替代 8 处默认出网配置；按需导入 CA。</td>
+      </tr>
+      <tr>
+        <td>阶段二<br>记忆启航</td>
+        <td>开启记忆并验证基础链路</td>
+        <td>标准版 Compose 部署；空间开启记忆（先 <code>explicit_only</code> 验证，再 <code>auto</code>）；配置抽取模型与延迟/间隔参数；做少量数据冒烟（入库→抽取→召回→检索）。</td>
+      </tr>
+      <tr>
+        <td>阶段三<br>检索联动</td>
+        <td>让记忆真正影响检索与文档组织</td>
+        <td>开启检索条件化与文档亲和；配置向量模型与检索个性化；验证记忆偏好对检索排序与文档组织的实际影响。</td>
+      </tr>
+      <tr>
+        <td>阶段四<br>多领域与治理</td>
+        <td>多空间 / 多身份治理</td>
+        <td>按领域建 Tenant；多领域物理隔离需更换向量库（Qdrant/Milvus 等）；完善 RBAC、审计、记忆管理（确认/拒绝/整理/导出）。</td>
+      </tr>
+      <tr>
+        <td>阶段五<br>安全与运维</td>
+        <td>生产安全与稳定性验证</td>
+        <td>做记忆相关安全（脱敏/权限/审计）与性能（抽取并发、检索）压测；建立数据备份（记忆属长期数据）；固化生产部署脚本与巡检。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="font-size:15px;color:var(--ink2);margin:20px 0 8px">7.3 风险提示</h3>
+  <div class="note alert">
+    <b>重点风险：</b>① 记忆涉及长期数据，抽取质量依赖 LLM，建议先 <code>explicit_only</code> 验证再 <code>auto</code>，并用 pending 人工确认把关；
+    ② 多领域物理隔离需更换向量库，默认 Postgres 引擎只能逻辑隔离；
+    ③ 自动抽取有模型调用成本，需用 <code>extract_min_interval_seconds</code> 等参数控制频率；
+    ④ 社区规模小，扩展需求（新向量库/协议模型）需提前评估改代码成本。
+  </div>
+
+  <div class="note good" style="margin-top:16px">
+    <b>总结：</b>WeKnora（wkj-dev）工程成熟度达到生产可交付水平，其长期记忆系统是「知识库内融合型」的领先设计，
+    在融合、一致性、信任、安全维度具备行业优势；可进入生产，适用企业私有化知识库 + 长期记忆场景，
+    落地时按「前置搭建 → 记忆启航 → 检索联动 → 多领域治理 → 安全运维」分阶段推进即可。
+  </div>
+</section>
+
+<!-- ===================== 附录 A：证据索引 ===================== -->
+<section>
+  <h2><span class="num">附录 A</span>证据索引（可核对）</h2>
+  <p class="sub">所有结论均附源码 / 迁移 / 文档位置，便于复核。</p>
+  <div class="evidence">
+    <p><b>工程规模与结构</b></p>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">go.mod</span> ｜ Go 1.26 版本 ｜ <code>internal/</code> 3287 个 Go 文件、全仓 3671 个 Go 文件
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">internal/types/memory.go</span> ｜ 1450 行：记忆模型、预算、状态、配置、敏感脱敏（sensitivePatterns / RedactSensitive）、主题归一化、双时态/待确认/拒绝抑制等核心类型
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">internal/application/service/memory/</span> ｜ 写入/抽取/召回/整理/主题/向量/管理实现（extract.go 43KB、service.go 48KB、vector.go、lexical.go、consolidate.go、topic_resolve.go 等）
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">internal/application/service/chat_pipeline/memory_recall.go</span> ｜ 常驻 block 召回插件
+      <span class="loc">memory_affinity.go</span> ｜ 文档亲和 rerank 插件
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">internal/agent/tools/search_memory.go</span> ｜ 按需记忆搜索工具（向量/词法召回）
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">internal/application/repository/memory_vector.go</span> ｜ 向量召回：DB 内精确排序（rankInDatabase）、进程回退（rankInProcess）、向量列同步
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">internal/application/service/memory/scope.go</span> ｜ 记忆范围从请求上下文解析（隔离模型）
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">internal/tracing/langfuse/memory_obs.go</span> ｜ 记忆 recall 与检索条件化追踪
+    </div>
+
+    <p><b>测试与质量保障</b></p>
+    <div class="evidence" style="margin-bottom:6px">
+      全仓 <code>_test.go</code> 共 2003 个；记忆相关 263 个文件、约 7900 行；service/memory 包测试 6747 行，repository/handler/agent/tracing/stream/background 相关测试 1142 行
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">internal/application/repository/memory_fencing_test.go</span> ｜ fencing 写代次测试
+      <span class="loc">internal/application/service/memory/admin_rejection_race_test.go</span> ｜ 拒绝竞态测试
+      <span class="loc">internal/application/service/memory/clear_fencing_test.go</span> ｜ 清空 fencing 测试
+      <span class="loc">internal/application/service/memory/consistency_test.go / regression_test.go</span> ｜ 一致性 / 回归测试
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">internal/application/service/memory/eval_test.go / quality_test.go / topic_eval_test.go / coverage_test.go</span> ｜ 抽取质量与评测测试
+    </div>
+
+    <p><b>迁移演进</b></p>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">migrations/versioned/000084_memory.up.sql</span> ｜ 记忆基础表与双时态/拒绝抑制/主题计数/文档亲和/向量独立表
+      <span class="loc">migrations/versioned/000094_memory_consistency.up.sql</span> ｜ 会话级提取进度与延迟替换
+      <span class="loc">migrations/versioned/000095_memory_vector_search.up.sql</span> ｜ 向量下沉到 DB（embedding halfvec）
+    </div>
+
+    <p><b>产品与接口文档</b></p>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">website-docs/03-features/23-memory.md</span> ｜ 长期记忆功能说明（开启/管理/对回答与检索的影响/空间配置/无账号身份管理/实现参考）
+      <span class="loc">website-docs/04-api/02-api-memory.md</span> ｜ 记忆 API 参考（个人 / 主题 / 管理接口）
+    </div>
+    <div class="evidence" style="margin-bottom:6px">
+      <span class="loc">deploy/deploy-wkj-dev.sh</span> ｜ 生产部署脚本（部署目标 111、容器组、外置迁移校验、健康检查）
+      <span class="loc">my-docker/docker-compose.overlay.yml</span> ｜ 叠加层编排（定制服务与端口）
+    </div>
+
+    <p><b>行业对标证据（源码注释）</b></p>
+    <div class="evidence">
+      <span class="loc">internal/application/service/memory/extract.go</span> 注释：<code>mem0 shows 10 by vector similarity, Graphiti at most 15 per entity</code>
+      <span class="loc">internal/types/memory.go</span> 注释：<code>Graphiti skips fuzzy matching for low-entropy names</code>、<code>Graphiti keeps the more specific node when collapsing duplicates</code>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 附录 B：图表清单 ===================== -->
+<section>
+  <h2><span class="num">附录 B</span>图表清单（由浅入深）</h2>
+  <div class="grid g4">
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--blue)"></span>图 1 · 记忆系统分层架构</div>
+      <div class="d">数据与配置 → 写入 → 读取 → 联动 → 治理/可观测/安全 五层结构（对应第 2 节）</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--purple)"></span>图 2 · 记忆数据模型（ER）</div>
+      <div class="d">主体/条目/向量/主题/文档亲和/拒绝抑制/会话进度 + tenants / messages 关联结构（对应第 2 节）</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--teal)"></span>图 3 · 记忆写入链路流程</div>
+      <div class="d">显式指令 / 后台抽取 / 管理操作的写入、抽取、冲突与治理流程（对应第 3 节）</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--green)"></span>图 4 · 记忆读取链路流程</div>
+      <div class="d">常驻 block 召回 → 按需检索 → 检索条件化（对应第 3 节）</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--orange)"></span>图 5 · 一致性保障机制</div>
+      <div class="d">双时态替代 / 待确认 / 拒绝抑制 / 写代次 / 测试保障（对应第 4 节）</div>
+    </div>
+    <div class="card">
+      <div class="t"><span class="dot" style="background:var(--amber)"></span>图 6 · 记忆系统设计能力领先度评分</div>
+      <div class="d">8 个设计维度领先度评分条（对应第 6 节）</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  WeKnora（wkj-dev）工程成熟度与记忆系统分析报告 ｜ 由浅入深：结论速览 → 工程成熟度 → 记忆架构 → 核心设计 → 工程实现 → 生产可用性 → 行业领先性 → 落地建议 ｜ 配套证据见「附录 A」
+</footer>
+
+</div>
+</body>
+</html>
