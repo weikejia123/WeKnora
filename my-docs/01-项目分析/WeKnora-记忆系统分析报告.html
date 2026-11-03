@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WeKnora（wkj-dev）记忆系统分析报告</title>
+<style>
+:root{
+  --ink:#0f172a; --ink2:#334155; --ink3:#64748b;
+  --line:#e2e8f0; --paper:#ffffff; --bg:#f1f5f9;
+  --blue:#2563eb; --purple:#7c3aed; --orange:#ea580c;
+  --green:#059669; --red:#dc2626; --amber:#b45309; --teal:#0d9488;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.75}
+.wrap{max-width:1180px;margin:0 auto}
+header{background:var(--paper);border:1px solid var(--line);border-radius:14px;
+  padding:24px 28px;margin-bottom:26px}
+h1{margin:0 0 8px;font-size:23px;letter-spacing:.2px}
+.meta{color:var(--ink3);font-size:13px;margin-bottom:14px}
+.badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.badge{display:inline-block;background:#eff6ff;color:var(--blue);border:1px solid #bfdbfe;
+  border-radius:6px;padding:2px 9px;font-size:12px;font-weight:600;margin-right:6px}
+.badge.g{background:#f0fdf4;color:var(--green);border-color:#a7f3d0}
+.badge.p{background:var(--purple-bg,#f5f3ff);color:var(--purple);border-color:#ddd6fe}
+.badge.t{background:#f0fdfa;color:var(--teal);border-color:#a7f3d0}
+section{background:var(--paper);border:1px solid var(--line);border-radius:14px;
+  padding:22px 28px;margin-bottom:24px}
+h2{margin:0 0 6px;font-size:18px}
+h2 .num{display:inline-block;width:26px;height:26px;line-height:26px;text-align:center;
+  background:var(--ink);color:#fff;border-radius:7px;font-size:13px;margin-right:11px;vertical-align:2px}
+.sub{color:var(--ink3);font-size:13px;margin:0 0 18px 37px}
+svgbox{width:100%;overflow-x:auto}
+svg{display:block;width:100%;height:auto;min-width:1180px}
+.note{background:#fffbeb;border:1px solid #fde68a;border-left:4px solid var(--amber);
+  border-radius:9px;padding:13px 16px;margin-top:18px;font-size:13px;color:#78350f}
+.note.alert{background:#fef2f2;border-color:#fecaca;border-left-color:var(--red);color:#7f1d1d}
+.note.good{background:#f0fdf4;border-color:#a7f3d0;border-left-color:var(--green);color:#166534}
+.grid{display:grid;gap:14px}
+.g4{grid-template-columns:repeat(auto-fit,minmax(226px,1fr))}
+.card{border:1px solid var(--line);border-radius:11px;padding:15px 17px;background:#fcfdff}
+.card .t{font-weight:700;font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.card .d{font-size:12.5px;color:var(--ink2);line-height:1.65}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f8fafc;color:var(--ink2);font-weight:600}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:11px;background:var(--paper)}
+.tags{display:inline-block;background:#f8fafc;border:1px solid var(--line);border-radius:6px;
+  padding:1px 7px;font-size:11.5px;color:var(--ink2);margin:2px 3px 2px 0}
+.flow-card{background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:0;overflow:hidden}
+.flow-card .cap{background:#1e293b;color:#fff;font-size:13px;font-weight:600;
+  padding:10px 18px;display:flex;align-items:center;gap:8px}
+.flow-card .cap .idx{background:rgba(255,255,255,.18);border-radius:6px;padding:1px 7px;font-size:11.5px}
+.flow-card .body{padding:14px 18px 18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<h1>WeKnora（wkj-dev）记忆系统分析报告</h1>
+<div class="meta">分析对象：WeKnora（腾讯开源 RAG 框架二开 fork，工作分支 wkj-dev）长期记忆系统　|　事实源：<code>internal/application/service/memory/</code> · <code>internal/types/interfaces/memory.go</code> · <code>internal/types/memory.go</code> · <code>internal/application/repository/memory*.go</code> · <code>migrations/versioned/000084_memory*.sql</code> · <code>migrations/versioned/000094_memory_consistency*.sql</code></div>
+<div class="badges">
+<span class="badge">记忆系统</span><span class="badge">时序流程图</span><span class="badge p">组成要素</span><span class="badge t">一致性机制</span></div>
+</header>
+<section>
+<h2><span class="num">1</span>结论速览（TL;DR）</h2>
+<div class="grid g4">
+<div class="card"><div class="t">定位</div><div class="d">跨会话、跨会话的个人长期记忆：记住一个 principal 在某个 workspace 内的稳定事实、偏好、任务、关注主题与文档依赖，让不同会话间的回答保持一致，并作为个人化检索信号。</div></div>
+<div class="card"><div class="t">核心设计</div><div class="d">「范围隔离 + 读写双路径 + 后台蒸馏 + 整库整合 + 一致性保障」五层结构：读路径零模型调用、永不报错；写入经统一 <code>writeReplacing</code> 保证清洗/脱敏/冲突/容量/向量一致。</div></div>
+<div class="card"><div class="t">可靠性</div><div class="d">后台蒸馏走 asynq 队列 + 租约串行化 + watermark 推进，不丢消息；推断性记忆进入 pending 待确认，遗忘用「指纹+来源消息」双重墓碑抑制重蒸馏。</div></div>
+<div class="card"><div class="t">一致性</div><div class="d">由范围解析、generation 围栏、事务替换关系、唯一索引、租约恢复、容量治理共同保障，并有专门的回滚/恢复一致性测试覆盖。</div></div>
+</div>
+</section>
+<section>
+<h2><span class="num">2</span>记忆系统的业务定位与设计目标</h2> <p class="sub">2.1 业务定义</p>
+<p>记忆系统是 WeKnora 的<strong>个人长期记忆层</strong>：它把「一个问题对这个人意味着什么」从知识库的通用检索中剥离出来，记住一个人在某个 workspace 内跨会话稳定存在的<strong>事实（fact）、偏好（preference）、任务（task）、关注主题（interest）</strong>与文档依赖（affinity），使不同会话之间的回答保持一致，并在知识库检索前注入个人化条件，让同一问题对不同人产生不同检索结果。</p>
+<p class="sub">2.2 与知识库的关系</p>
+<p>记忆与知识库是正交的两个维度：</p>
+<ul><li><strong>个人化层</strong>：记忆提供 <code>RetrievalContext</code>（background/interests/documents），在检索前改写查询、个性化文档排序，解决「同一问题对不同人意义不同」的问题。</li><li><strong>持久信号层</strong>：记忆中的文档亲和度（<code>memory_doc_affinity</code>）与熟悉文档列表，让个人偏好在知识库中可持久表达（Wiki 高亮、reranker 加权）。</li><li><strong>不替代知识库</strong>：记忆是「关于人的记忆」，知识库是「关于主题的知识」，二者互不覆盖。</li></ul>
+<p class="sub">2.3 与通用记忆系统（ChatGPT background layer / Graphiti / mem0 等）的差异</p>
+<table><thead><tr><th>维度</th><th>通用记忆系统常见做法</th><th>WeKnora 记忆系统的做法</th></tr></thead><tbody>
+<tr><td>写入可审计</td><td>推断性记忆静默写入</td><td>推断性记忆（inferred）进入 <code>pending</code> 状态，必须用户确认才生效，避免静默错误断言</td></tr>
+<tr><td>遗忘精确性</td><td>删除可能连带丢弃内容</td><td>只记录 topic + fingerprint + 来源消息的墓碑，用指纹+来源消息双重抑制重蒸馏</td></tr>
+<tr><td>读路径延迟</td><td>召回可能涉及模型调用</td><td>Recall / SearchMemory / RetrievalContextFor 均为纯索引读取，零模型调用，永不阻塞首 token</td></tr>
+<tr><td>语义召回</td><td>直接依赖向量检索</td><td>词法 + 向量双路 RRF 融合，带最小相关分与预算截断，可降级词法</td></tr>
+                 <tr><td>主题归一</td><td>按字符串直接匹配</td><td>主题解析三级（归一化相等→模糊 bigram→模型裁决），避免同一主题被重复计数</td></tr>
+<tr><td>全局治理</td><td>依赖逐轮蒸馏覆盖全局</td><td>独立整库整合阶段：过期归档、陈旧任务降权、近重复合并、向量回填与同步</td></tr>
+<tr><td>隔离安全</td><td>依赖客户端传入作用域</td><td>范围从请求上下文推导，不信任客户端 id，杜绝跨主体泄漏</td></tr>
+</tbody></table>
+</section>
+<section>
+<h2><span class="num">3</span>记忆系统组成要素</h2>
+<p class="sub">按「要素 → 位置 → 职责 → 关键机制」梳理记忆系统的全部组成要素（共 9 类）。</p>
+<div class="tbl-wrap"><table><thead><tr><th>要素类别</th><th>位置</th><th>职责</th><th>关键机制</th></tr></thead><tbody>
+<tr><td><strong>1. 核心服务层</strong></td><td class="tags">internal/application/service/memory/（Service 及子模块）</td><td>范围解析、写入编排、读取（Recall/SearchMemory/RetrievalContextFor/DocumentAffinity）、主题观察与解析、整库整合触发、管理员接口</td><td>writeReplacing 统一写入；enabledScope 三级开关；captureGeneration 围栏；RRF 融合；主题解析 tier1-3</td></tr>
+<tr><td><strong>2. 存储层</strong></td><td class="tags">internal/application/repository/memory*.go；migrations/versioned/000084_memory*.sql、000094_memory_consistency*.sql；internal/types/memory.go</td><td>主体/条目/主题/墓碑/文档亲和度/向量/提取会话的持久化与查询</td><td>表：memory_subjects、memory_items、memory_item_embeddings、memory_topic_stats、memory_tombstones、memory_doc_affinity、memory_extraction_sessions；事务替换关系 replaces_id、唯一索引（scope+fingerprint）、generation 围栏</td></tr>
+<tr><td><strong>3. 向量语义层</strong></td><td class="tags">memory/vector.go、memory/lexical.go</td><td>embedding、语义检索、RRF 融合、向量回填、向量同步、向量失效</td><td>embedTimeout=2s（读侧，超时降级词法）；minCosine=0.5；rrfK=60；backfillPerRun=200；vectorSyncPerRun=2000</td></tr>
+<tr><td><strong>4. 读取路径（读侧）</strong></td><td class="tags">service.go（Recall/SearchMemory/RetrievalContextFor/DocumentAffinity）</td><td>每轮召回、按需检索、检索条件注入、文档亲和度反馈</td><td>Recall 零模型调用、永不报错；三级开关降级；maxItems/runes 预算截断；touchAsync 记录使用</td></tr>
+<tr><td><strong>5. 写入路径（写侧）</strong></td><td class="tags">service.go（Remember/CreateItem/UpdateItem/DeleteItem/Clear）+ extract.go（ScheduleExtraction/Handle）+ topic_resolve.go（主题）</td><td>显式写入、背景蒸馏、主题观察与提升、文档亲和度记录</td><td>统一 writeReplacing；清洗/脱敏/指纹/冲突/容量/向量；pending 推断确认；asynq 队列 + 租约</td></tr>
+<tr><td><strong>6. 后台任务与队列层</strong></td><td class="tags">asynq（QueueMemory / TypeMemoryExtract）；consolidate.go（整合维护）</td><td>背景蒸馏 worker、整库整合维护、向量回填与同步维护</td><td>MaxRetry=2、ProcessIn delay；租约串行化；watermark 推进；跟进任务；每日整合 + 手动 forced</td></tr>
+<tr><td><strong>7. 一致性保障机制</strong></td><td class="tags">scope.go、service.go、repository 层、migrations/000094</td><td>范围隔离、generation 围栏、事务原子性、替换关系、遗忘墓碑、租约恢复、容量治理</td><td>ResolveScope 从请求上下文解析；generation 围栏；事务回滚；tombstone 双重抑制；租约恢复；事务回滚测试</td></tr>
+<tr><td><strong>8. 接入层（与记忆耦合）</strong></td><td class="tags">chat_pipeline/（PluginMemoryRecall、PluginMemoryAffinity）+ agent memory tool + DetectExplicitMemory</td><td>把记忆接入聊天管线：注入系统提示、reranker 个性化、agent 记忆工具、识别显式记忆指令、事件通知</td><td>MEMORY_RECALL / CHUNK_RERANK 事件钩子；显式指令前缀识别（记住：/ remember: 等）</td></tr>
+<tr><td><strong>9. 配置与开关</strong></td><td class="tags">MemoryConfig（workspace 级）+ MemoryItem 状态/来源 + MemoryDisabledContextKey（agent 级）</td><td>工作区开关、写入模式、提取模型、容量、阈值、向量/检索条件开关；agent 级读开关</td><td>MemoryConfig.Normalize 默认值；agent 开关在请求上下文，随日志与重放上下文传递</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2><span class="num">4</span>记忆系统时序流程图</h2>
+<p class="sub">以下时序图以「请求方 / 记忆服务 / 存储层 / 向量与模型层 / 后台任务与队列」为要素泳道，展示记忆系统的全部组成要素与核心流程：总览时序、写入链路、读取链路、主题解析与兴趣生成、整库整合与一致性维护、隔离与一致性保障。</p>
+
+<section class="flow-card">
+  <div class="cap"><span class="idx">图 1</span>阶段一　写入链路（显式写入 + 背景蒸馏）</div>
+  <div class="body">
+    <div class="svgbox"><svg viewBox="0 0 1240 760" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,\"PingFang SC\",\"Microsoft YaHei\",sans-serif">
+
+  <defs>
+    <marker id="mk_solid" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#2563eb"/>
+    </marker>
+    <marker id="mk_async" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#0d9488" stroke="#0d9488" stroke-dasharray="4 3"/>
+    </marker>
+    <marker id="mk_highlight" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+<rect x="-14.0" y="10" width="140" height="30" rx="8" fill="#eff6ff" stroke="#94a3b8" stroke-width="1"/><text x="56.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">请求方（用户/Agent）</text>
+<line x1="56.0" y1="40" x2="56.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="266.0" y="10" width="140" height="30" rx="8" fill="#f5f3ff" stroke="#94a3b8" stroke-width="1"/><text x="336.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">记忆服务 Service</text>
+<line x1="336.0" y1="40" x2="336.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="546.0" y="10" width="140" height="30" rx="8" fill="#f0fdfa" stroke="#94a3b8" stroke-width="1"/><text x="616.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">存储层 Repository</text>
+<line x1="616.0" y1="40" x2="616.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="826.0" y="10" width="140" height="30" rx="8" fill="#fffbeb" stroke="#94a3b8" stroke-width="1"/><text x="896.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">向量与模型层</text>
+<line x1="896.0" y1="40" x2="896.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="1106.0" y="10" width="140" height="30" rx="8" fill="#fef2f2" stroke="#94a3b8" stroke-width="1"/><text x="1176.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">后台任务与队列（asynq）</text>
+<line x1="1176.0" y1="40" x2="1176.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="56" y="96" width="1124" height="26" fill="#1e293b"/><text x="56" y="114" font-size="14" fill="#ffffff" font-weight="600">阶段一　写入链路（显式写入 + 背景蒸馏）</text>
+<line x1="78.0" y1="138.0" x2="314.0" y2="138.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="125.0" text-anchor="middle" font-size="12.5" fill="#334155">Remember/CreateItem/UpdateItem（显式写入，统一走 writeReplacing）</text>
+<line x1="358.0" y1="185.6" x2="314.0" y2="185.6" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="336.0" y="172.6" text-anchor="middle" font-size="12.5" fill="#334155">writeReplacing：清洗→脱敏→校验→墓碑检查→冲突检测</text>
+<line x1="358.0" y1="233.3" x2="594.0" y2="233.3" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="220.3" text-anchor="middle" font-size="12.5" fill="#334155">SaveItemWithPendingLimit：保存（replaces_id 替换关系 + pendingLimit）</text>
+<line x1="358.0" y1="280.9" x2="594.0" y2="280.9" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="267.9" text-anchor="middle" font-size="12.5" fill="#334155">enforceCapacity：超限归档最低排名</text>
+<line x1="358.0" y1="328.5" x2="594.0" y2="328.5" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="315.5" text-anchor="middle" font-size="12.5" fill="#334155">rebuildBlock：重建 resident block</text>
+<line x1="358.0" y1="376.2" x2="594.0" y2="376.2" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="363.2" text-anchor="middle" font-size="12.5" fill="#334155">storeItemEmbedding：存向量（best-effort，失败不阻断写入）</text>
+<line x1="78.0" y1="423.8" x2="314.0" y2="423.8" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="410.8" text-anchor="middle" font-size="12.5" fill="#334155">ScheduleExtraction：会话结束，排队背景蒸馏（asynq）</text>
+<line x1="358.0" y1="471.5" x2="1154.0" y2="471.5" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="756.0" y="458.5" text-anchor="middle" font-size="12.5" fill="#334155">EnqueueExtraction：入队 TaskMemoryExtract（MaxRetry=2）</text>
+<line x1="1198.0" y1="519.1" x2="314.0" y2="519.1" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="756.0" y="506.1" text-anchor="middle" font-size="12.5" fill="#334155">Handle：worker 执行蒸馏（分段/模型调用/决策落库/租约）</text>
+<line x1="358.0" y1="566.7" x2="594.0" y2="566.7" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="553.7" text-anchor="middle" font-size="12.5" fill="#334155">observeTopics：主题计数→解析→兴趣提升</text>
+<line x1="358.0" y1="614.4" x2="1154.0" y2="614.4" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="756.0" y="601.4" text-anchor="middle" font-size="12.5" fill="#334155">scheduleFollowUpIfNeeded：跟进任务 + 释放租约</text>
+<line x1="358.0" y1="662.0" x2="594.0" y2="662.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="649.0" text-anchor="middle" font-size="12.5" fill="#334155">consolidateIfDue：触发整库整合（过期/降权/合并/回填/同步）</text>
+<rect x="56" y="718.0" width="1124" height="26" fill="#1e293b"/><text x="56" y="736.0" font-size="14" fill="#ffffff" font-weight="600">阶段二　读取链路（召回 + 按需检索 + 检索条件注入）</text>
+<line x1="78.0" y1="760.0" x2="314.0" y2="760.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="747.0" text-anchor="middle" font-size="12.5" fill="#334155">Recall(query)：每轮召回，零模型调用、永不报错</text>
+<line x1="358.0" y1="766.2" x2="594.0" y2="766.2" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="753.2" text-anchor="middle" font-size="12.5" fill="#334155">enabledScope：三级开关检查（workspace/user/agent）+ 加载 resident/情境条目</text>
+<line x1="358.0" y1="772.5" x2="874.0" y2="772.5" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="759.5" text-anchor="middle" font-size="12.5" fill="#334155">vectorSearch：embed query，语义检索（RRF 融合，minCosine=0.5）</text>
+<line x1="358.0" y1="778.8" x2="594.0" y2="778.8" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="765.8" text-anchor="middle" font-size="12.5" fill="#334155">lexicalRanking + fuseRankings：词法打分 + RRF 融合</text>
+<line x1="358.0" y1="785.0" x2="594.0" y2="785.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="772.0" text-anchor="middle" font-size="12.5" fill="#334155">takeWithinBudget：受 maxItems/runes 预算截断</text>
+<line x1="358.0" y1="791.2" x2="34.0" y2="791.2" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="778.2" text-anchor="middle" font-size="12.5" fill="#334155">WrapMemoryForPrompt：组装注入 prompt（&lt;user_memory&gt; 信封）</text>
+<line x1="358.0" y1="797.5" x2="594.0" y2="797.5" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="476.0" y="784.5" text-anchor="middle" font-size="12.5" fill="#334155">touchAsync：异步记录使用（计入容量与排名）</text>
+<line x1="78.0" y1="803.8" x2="314.0" y2="803.8" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="790.8" text-anchor="middle" font-size="12.5" fill="#334155">SearchMemory(query,limit)：按需检索（20 条 / 2000 runes）</text>
+<line x1="78.0" y1="810.0" x2="314.0" y2="810.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="797.0" text-anchor="middle" font-size="12.5" fill="#334155">RetrievalContextFor：检索条件注入（background/interests/documents）</text>
+<rect x="56" y="866.0" width="1124" height="26" fill="#1e293b"/><text x="56" y="884.0" font-size="14" fill="#ffffff" font-weight="600">阶段三　维护与一致性保障（主题解析 / 整库整合 / 隔离围栏 / 遗忘）</text>
+<line x1="358.0" y1="908.0" x2="594.0" y2="908.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="895.0" text-anchor="middle" font-size="12.5" fill="#334155">consolidateIfDue：每日整库整合（过期归档/陈旧降权/合并/回填/同步向量列）</text>
+<line x1="358.0" y1="918.0" x2="594.0" y2="918.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="905.0" text-anchor="middle" font-size="12.5" fill="#334155">topic_resolve：主题解析 tier1-3（归一化相等→模糊 bigram→模型裁决）</text>
+<line x1="78.0" y1="928.0" x2="314.0" y2="928.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="915.0" text-anchor="middle" font-size="12.5" fill="#334155">Clear/DeleteItem：遗忘（记录 tombstone 后删除）</text>
+<line x1="358.0" y1="938.0" x2="594.0" y2="938.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="925.0" text-anchor="middle" font-size="12.5" fill="#334155">AddTombstone：记录遗忘指纹 + 来源消息（双重抑制重蒸馏）</text>
+<line x1="358.0" y1="948.0" x2="594.0" y2="948.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="935.0" text-anchor="middle" font-size="12.5" fill="#334155">captureGeneration：刷新 generation 围栏（防止清除后复活）</text>
+<line x1="1198.0" y1="958.0" x2="314.0" y2="958.0" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="756.0" y="945.0" text-anchor="middle" font-size="12.5" fill="#334155">Handle：租约串行化 + 重投递等待租约过期恢复</text>
+<rect x="56" y="734" width="24" height="8" fill="#2563eb"/><text x="78" y="744" font-size="11.5" fill="#64748b">同步调用</text>
+<rect x="170" y="734" width="24" height="8" fill="#0d9488" stroke-dasharray="4 3"/><text x="192" y="744" font-size="11.5" fill="#64748b">异步/后台任务</text>
+<rect x="270" y="734" width="24" height="8" fill="#7c3aed"/><text x="292" y="744" font-size="11.5" fill="#64748b">关键步骤</text>
+</svg></div>
+  </div>
+</section>
+
+<section class="flow-card">
+  <div class="cap"><span class="idx">图 2</span>P1　显式写入链路（Remember / CreateItem / UpdateItem / DeleteItem / Clear）</div>
+  <div class="body">
+    <div class="svgbox"><svg viewBox="0 0 1240 760" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,\"PingFang SC\",\"Microsoft YaHei\",sans-serif">
+
+  <defs>
+    <marker id="mk_solid" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#2563eb"/>
+    </marker>
+    <marker id="mk_async" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#0d9488" stroke="#0d9488" stroke-dasharray="4 3"/>
+    </marker>
+    <marker id="mk_highlight" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+<rect x="-14.0" y="10" width="140" height="30" rx="8" fill="#eff6ff" stroke="#94a3b8" stroke-width="1"/><text x="56.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">请求方（用户/Agent）</text>
+<line x1="56.0" y1="40" x2="56.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="266.0" y="10" width="140" height="30" rx="8" fill="#f5f3ff" stroke="#94a3b8" stroke-width="1"/><text x="336.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">记忆服务 Service</text>
+<line x1="336.0" y1="40" x2="336.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="546.0" y="10" width="140" height="30" rx="8" fill="#f0fdfa" stroke="#94a3b8" stroke-width="1"/><text x="616.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">存储层 Repository</text>
+<line x1="616.0" y1="40" x2="616.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="826.0" y="10" width="140" height="30" rx="8" fill="#fffbeb" stroke="#94a3b8" stroke-width="1"/><text x="896.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">向量与模型层</text>
+<line x1="896.0" y1="40" x2="896.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="1106.0" y="10" width="140" height="30" rx="8" fill="#fef2f2" stroke="#94a3b8" stroke-width="1"/><text x="1176.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">后台任务与队列（asynq）</text>
+<line x1="1176.0" y1="40" x2="1176.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="56" y="96" width="1124" height="26" fill="#1e293b"/><text x="56" y="114" font-size="14" fill="#ffffff" font-weight="600">P1　显式写入链路（Remember / CreateItem / UpdateItem / DeleteItem / Clear）</text>
+<line x1="78.0" y1="138.0" x2="314.0" y2="138.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="125.0" text-anchor="middle" font-size="12.5" fill="#334155">Remember/CreateItem/UpdateItem（显式写入，统一走 writeReplacing）</text>
+<line x1="358.0" y1="212.9" x2="314.0" y2="212.9" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="336.0" y="199.9" text-anchor="middle" font-size="12.5" fill="#334155">writeReplacing：清洗→脱敏→校验 kind→墓碑检查→冲突/包含重复检测</text>
+<line x1="358.0" y1="287.7" x2="594.0" y2="287.7" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="274.7" text-anchor="middle" font-size="12.5" fill="#334155">SaveItemWithPendingLimit：保存（replaces_id 替换关系 + pendingLimit）</text>
+<line x1="358.0" y1="362.6" x2="594.0" y2="362.6" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="349.6" text-anchor="middle" font-size="12.5" fill="#334155">enforceCapacity：超限归档最低排名</text>
+<line x1="358.0" y1="437.4" x2="594.0" y2="437.4" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="424.4" text-anchor="middle" font-size="12.5" fill="#334155">rebuildBlock：重建 resident block</text>
+<line x1="358.0" y1="512.3" x2="594.0" y2="512.3" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="499.3" text-anchor="middle" font-size="12.5" fill="#334155">storeItemEmbedding：存向量（best-effort）</text>
+<line x1="78.0" y1="587.1" x2="314.0" y2="587.1" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="574.1" text-anchor="middle" font-size="12.5" fill="#334155">UpdateItem：编辑后置 manual，避免后台提取静默覆盖</text>
+<line x1="78.0" y1="662.0" x2="314.0" y2="662.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="649.0" text-anchor="middle" font-size="12.5" fill="#334155">DeleteItem/Clear：遗忘——记录 tombstone 后删除（Clear 按 status 分批记墓碑）</text>
+<rect x="56" y="718.0" width="1124" height="26" fill="#1e293b"/><text x="56" y="736.0" font-size="14" fill="#ffffff" font-weight="600">P2　背景蒸馏链路（ScheduleExtraction → asynq → Handle）</text>
+<line x1="78.0" y1="760.0" x2="314.0" y2="760.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="196.0" y="747.0" text-anchor="middle" font-size="12.5" fill="#334155">ScheduleExtraction：会话结束，EnqueuePendingSession 排队（含最小间隔防抖）</text>
+<line x1="358.0" y1="765.6" x2="1154.0" y2="765.6" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="756.0" y="752.6" text-anchor="middle" font-size="12.5" fill="#334155">EnqueueExtraction：入队 TaskMemoryExtract（ProcessIn delay，MaxRetry=2）</text>
+<line x1="1198.0" y1="771.1" x2="314.0" y2="771.1" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="756.0" y="758.1" text-anchor="middle" font-size="12.5" fill="#334155">Handle：claim 会话 + 租约（leaseID 串行化并发）</text>
+<line x1="358.0" y1="776.7" x2="594.0" y2="776.7" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="763.7" text-anchor="middle" font-size="12.5" fill="#334155">collectSessionSegments：分页读会话消息，按 1h 静默分段 + 上下文</text>
+<line x1="358.0" y1="782.2" x2="874.0" y2="782.2" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="769.2" text-anchor="middle" font-size="12.5" fill="#334155">relevantExisting：语义搜索取最相关已有记忆（供模型更新/替代）</text>
+<line x1="358.0" y1="787.8" x2="314.0" y2="787.8" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="336.0" y="774.8" text-anchor="middle" font-size="12.5" fill="#334155">callExtractionModel：LLM 结构化提取（Temperature=0，截断则重试）</text>
+<line x1="358.0" y1="793.3" x2="314.0" y2="793.3" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="336.0" y="780.3" text-anchor="middle" font-size="12.5" fill="#334155">applyDecisions：add/update/delete 决策落库（目标索引校验防幻觉）</text>
+<line x1="358.0" y1="798.9" x2="594.0" y2="798.9" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="476.0" y="785.9" text-anchor="middle" font-size="12.5" fill="#334155">observeTopics：主题计数 + 解析 + 兴趣提升</text>
+<line x1="358.0" y1="804.4" x2="1154.0" y2="804.4" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="756.0" y="791.4" text-anchor="middle" font-size="12.5" fill="#334155">scheduleFollowUpIfNeeded：跟进任务 + 释放租约</text>
+<line x1="358.0" y1="810.0" x2="314.0" y2="810.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="336.0" y="797.0" text-anchor="middle" font-size="12.5" fill="#334155">consolidateIfDue：触发整库整合</text>
+<rect x="56" y="734" width="24" height="8" fill="#2563eb"/><text x="78" y="744" font-size="11.5" fill="#64748b">同步调用</text>
+<rect x="170" y="734" width="24" height="8" fill="#0d9488" stroke-dasharray="4 3"/><text x="192" y="744" font-size="11.5" fill="#64748b">异步/后台任务</text>
+<rect x="270" y="734" width="24" height="8" fill="#7c3aed"/><text x="292" y="744" font-size="11.5" fill="#64748b">关键步骤</text>
+</svg></div>
+  </div>
+</section>
+
+<section class="flow-card">
+  <div class="cap"><span class="idx">图 3</span>P1　召回链路（Recall，每轮注入，零模型调用）</div>
+  <div class="body">
+    <div class="svgbox"><svg viewBox="0 0 1240 760" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,\"PingFang SC\",\"Microsoft YaHei\",sans-serif">
+
+  <defs>
+    <marker id="mk_solid" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#2563eb"/>
+    </marker>
+    <marker id="mk_async" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#0d9488" stroke="#0d9488" stroke-dasharray="4 3"/>
+    </marker>
+    <marker id="mk_highlight" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+<rect x="-14.0" y="10" width="140" height="30" rx="8" fill="#eff6ff" stroke="#94a3b8" stroke-width="1"/><text x="56.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">请求方（用户/Agent）</text>
+<line x1="56.0" y1="40" x2="56.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="359.3" y="10" width="140" height="30" rx="8" fill="#f5f3ff" stroke="#94a3b8" stroke-width="1"/><text x="429.3" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">记忆服务 Service</text>
+<line x1="429.3333333333333" y1="40" x2="429.3333333333333" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="732.7" y="10" width="140" height="30" rx="8" fill="#f0fdfa" stroke="#94a3b8" stroke-width="1"/><text x="802.7" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">存储层 Repository</text>
+<line x1="802.6666666666666" y1="40" x2="802.6666666666666" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="1106.0" y="10" width="140" height="30" rx="8" fill="#fffbeb" stroke="#94a3b8" stroke-width="1"/><text x="1176.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">向量与模型层</text>
+<line x1="1176.0" y1="40" x2="1176.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="56" y="96" width="1124" height="26" fill="#1e293b"/><text x="56" y="114" font-size="14" fill="#ffffff" font-weight="600">P1　召回链路（Recall，每轮注入，零模型调用）</text>
+<line x1="78.0" y1="138.0" x2="407.3" y2="138.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="242.7" y="125.0" text-anchor="middle" font-size="12.5" fill="#334155">Recall(query)：组装 resident block + 情境匹配项，注入系统提示</text>
+<line x1="451.3" y1="196.2" x2="780.7" y2="196.2" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="183.2" text-anchor="middle" font-size="12.5" fill="#334155">enabledScope：三级开关检查（workspace/user/agent）</text>
+<line x1="451.3" y1="254.4" x2="780.7" y2="254.4" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="241.4" text-anchor="middle" font-size="12.5" fill="#334155">ListActiveResident：resident 条目；selectResidentInterests：兴趣选择（上限 5）</text>
+<line x1="451.3" y1="312.7" x2="780.7" y2="312.7" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="299.7" text-anchor="middle" font-size="12.5" fill="#334155">ListActiveByKinds：情境条目（fact/task，词法池=当前容量上限）</text>
+<line x1="451.3" y1="370.9" x2="1154.0" y2="370.9" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="802.7" y="357.9" text-anchor="middle" font-size="12.5" fill="#334155">vectorSearch：embed query，语义检索（RRF 融合，minCosine=0.5）</text>
+<line x1="451.3" y1="429.1" x2="780.7" y2="429.1" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="416.1" text-anchor="middle" font-size="12.5" fill="#334155">lexicalRanking + fuseRankings：词法打分 + RRF 融合（hybrid 或 lexical_only）</text>
+<line x1="451.3" y1="487.3" x2="780.7" y2="487.3" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="474.3" text-anchor="middle" font-size="12.5" fill="#334155">takeWithinBudget：受 maxItems/runes 预算截断（默认 5 条 / 600 runes）</text>
+<line x1="451.3" y1="545.6" x2="34.0" y2="545.6" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="242.7" y="532.6" text-anchor="middle" font-size="12.5" fill="#334155">WrapMemoryForPrompt：组装 &lt;user_memory&gt; 信封</text>
+<line x1="451.3" y1="603.8" x2="780.7" y2="603.8" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="616.0" y="590.8" text-anchor="middle" font-size="12.5" fill="#334155">touchAsync：异步记录使用</text>
+<line x1="451.3" y1="662.0" x2="34.0" y2="662.0" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="242.7" y="649.0" text-anchor="middle" font-size="12.5" fill="#334155">emitMemoryRecalled：事件通知聊天 UI</text>
+<rect x="56" y="718.0" width="1124" height="26" fill="#1e293b"/><text x="56" y="736.0" font-size="14" fill="#ffffff" font-weight="600">P2　按需检索与检索条件注入</text>
+<line x1="78.0" y1="760.0" x2="407.3" y2="760.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="242.7" y="747.0" text-anchor="middle" font-size="12.5" fill="#334155">SearchMemory(query,limit)：按需检索（默认 10 / 上限 20 条，2000 runes）</text>
+<line x1="78.0" y1="776.7" x2="407.3" y2="776.7" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="242.7" y="763.7" text-anchor="middle" font-size="12.5" fill="#334155">RetrievalContextFor：检索条件注入（background/interests/documents）</text>
+<line x1="451.3" y1="793.3" x2="780.7" y2="793.3" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="780.3" text-anchor="middle" font-size="12.5" fill="#334155">ListActiveByKinds(profile/interest,30) + topDocumentTitles：构建检索条件</text>
+<line x1="451.3" y1="810.0" x2="1154.0" y2="810.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="802.7" y="797.0" text-anchor="middle" font-size="12.5" fill="#334155">DocumentAffinity / RecordAnswerSources：文档亲和度（供 reranker 个性化）</text>
+<rect x="56" y="734" width="24" height="8" fill="#2563eb"/><text x="78" y="744" font-size="11.5" fill="#64748b">同步调用</text>
+<rect x="170" y="734" width="24" height="8" fill="#0d9488" stroke-dasharray="4 3"/><text x="192" y="744" font-size="11.5" fill="#64748b">异步/后台任务</text>
+<rect x="270" y="734" width="24" height="8" fill="#7c3aed"/><text x="292" y="744" font-size="11.5" fill="#64748b">关键步骤</text>
+</svg></div>
+  </div>
+</section>
+
+<section class="flow-card">
+  <div class="cap"><span class="idx">图 4</span>P1　主题计数与解析（避免同一主题重复计数）</div>
+  <div class="body">
+    <div class="svgbox"><svg viewBox="0 0 1240 760" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,\"PingFang SC\",\"Microsoft YaHei\",sans-serif">
+
+  <defs>
+    <marker id="mk_solid" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#2563eb"/>
+    </marker>
+    <marker id="mk_async" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#0d9488" stroke="#0d9488" stroke-dasharray="4 3"/>
+    </marker>
+    <marker id="mk_highlight" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+<rect x="-14.0" y="10" width="140" height="30" rx="8" fill="#eff6ff" stroke="#94a3b8" stroke-width="1"/><text x="56.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">请求方（用户/Agent）</text>
+<line x1="56.0" y1="40" x2="56.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="546.0" y="10" width="140" height="30" rx="8" fill="#f5f3ff" stroke="#94a3b8" stroke-width="1"/><text x="616.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">记忆服务 Service</text>
+<line x1="616.0" y1="40" x2="616.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="1106.0" y="10" width="140" height="30" rx="8" fill="#f0fdfa" stroke="#94a3b8" stroke-width="1"/><text x="1176.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">存储层 Repository</text>
+<line x1="1176.0" y1="40" x2="1176.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="56" y="96" width="1124" height="26" fill="#1e293b"/><text x="56" y="114" font-size="14" fill="#ffffff" font-weight="600">P1　主题计数与解析（避免同一主题重复计数）</text>
+<line x1="78.0" y1="138.0" x2="594.0" y2="138.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="336.0" y="125.0" text-anchor="middle" font-size="12.5" fill="#334155">observeTopics：提取结果含 topics，或手动 PromoteTopic/DeleteTopic</text>
+<line x1="638.0" y1="312.7" x2="1154.0" y2="312.7" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="299.7" text-anchor="middle" font-size="12.5" fill="#334155">resolveTopics：tier1 归一化相等 / tier2 模糊 bigram（≥0.80，需≥4字符）/ tier3 模型裁决</text>
+<line x1="638.0" y1="487.3" x2="1154.0" y2="487.3" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="474.3" text-anchor="middle" font-size="12.5" fill="#334155">collapseNewTopicsWithinRun：同 run 近似标签合并为一条</text>
+<line x1="638.0" y1="662.0" x2="1154.0" y2="662.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="649.0" text-anchor="middle" font-size="12.5" fill="#334155">BumpTopic：记录命中次数（hits）与别名（aliases）</text>
+<rect x="56" y="718.0" width="1124" height="26" fill="#1e293b"/><text x="56" y="736.0" font-size="14" fill="#ffffff" font-weight="600">P2　兴趣提升与向量维护</text>
+<line x1="638.0" y1="760.0" x2="594.0" y2="760.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="747.0" text-anchor="middle" font-size="12.5" fill="#334155">命中达阈值（EffectiveInterestThreshold，默认 3）且未遗忘</text>
+<line x1="638.0" y1="772.5" x2="1154.0" y2="772.5" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="759.5" text-anchor="middle" font-size="12.5" fill="#334155">write 生成 interest 条目（Origin=extracted，进入 resident 块）</text>
+<line x1="638.0" y1="785.0" x2="1154.0" y2="785.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="772.0" text-anchor="middle" font-size="12.5" fill="#334155">MarkTopicPromoted：标记已提升，不再重复提升</text>
+<line x1="638.0" y1="797.5" x2="1154.0" y2="797.5" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="784.5" text-anchor="middle" font-size="12.5" fill="#334155">invalidateInterestEmbedding：别名/重命名变化时失效向量（由回填重建）</text>
+<line x1="638.0" y1="810.0" x2="1154.0" y2="810.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="797.0" text-anchor="middle" font-size="12.5" fill="#334155">renameTopic：合并后重命名，保持别名与向量一致</text>
+<rect x="56" y="734" width="24" height="8" fill="#2563eb"/><text x="78" y="744" font-size="11.5" fill="#64748b">同步调用</text>
+<rect x="170" y="734" width="24" height="8" fill="#0d9488" stroke-dasharray="4 3"/><text x="192" y="744" font-size="11.5" fill="#64748b">异步/后台任务</text>
+<rect x="270" y="734" width="24" height="8" fill="#7c3aed"/><text x="292" y="744" font-size="11.5" fill="#64748b">关键步骤</text>
+</svg></div>
+  </div>
+</section>
+
+<section class="flow-card">
+  <div class="cap"><span class="idx">图 5</span>P1　整合前置与过期治理</div>
+  <div class="body">
+    <div class="svgbox"><svg viewBox="0 0 1240 760" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,\"PingFang SC\",\"Microsoft YaHei\",sans-serif">
+
+  <defs>
+    <marker id="mk_solid" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#2563eb"/>
+    </marker>
+    <marker id="mk_async" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#0d9488" stroke="#0d9488" stroke-dasharray="4 3"/>
+    </marker>
+    <marker id="mk_highlight" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+<rect x="-14.0" y="10" width="140" height="30" rx="8" fill="#eff6ff" stroke="#94a3b8" stroke-width="1"/><text x="56.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">请求方（用户/Agent）</text>
+<line x1="56.0" y1="40" x2="56.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="546.0" y="10" width="140" height="30" rx="8" fill="#f5f3ff" stroke="#94a3b8" stroke-width="1"/><text x="616.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">记忆服务 Service</text>
+<line x1="616.0" y1="40" x2="616.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="1106.0" y="10" width="140" height="30" rx="8" fill="#f0fdfa" stroke="#94a3b8" stroke-width="1"/><text x="1176.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">存储层 Repository</text>
+<line x1="1176.0" y1="40" x2="1176.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="56" y="96" width="1124" height="26" fill="#1e293b"/><text x="56" y="114" font-size="14" fill="#ffffff" font-weight="600">P1　整合前置与过期治理</text>
+<line x1="78.0" y1="138.0" x2="594.0" y2="138.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="336.0" y="125.0" text-anchor="middle" font-size="12.5" fill="#334155">consolidateIfDue：每日 24h；ConsolidateNow：手动（forced，1min）</text>
+<line x1="638.0" y1="400.0" x2="1154.0" y2="400.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="387.0" text-anchor="middle" font-size="12.5" fill="#334155">reviewStore：检查时间戳（too soon）</text>
+<line x1="638.0" y1="662.0" x2="1154.0" y2="662.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="649.0" text-anchor="middle" font-size="12.5" fill="#334155">ExpireOverdue：过期任务归档（expires_at 已过不再合并）</text>
+<rect x="56" y="718.0" width="1124" height="26" fill="#1e293b"/><text x="56" y="736.0" font-size="14" fill="#ffffff" font-weight="600">P2　候选聚类与模型合并</text>
+<line x1="638.0" y1="760.0" x2="1154.0" y2="760.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="747.0" text-anchor="middle" font-size="12.5" fill="#334155">加载全部 active 条目（整库，非分页）</text>
+<line x1="638.0" y1="772.5" x2="1154.0" y2="772.5" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="759.5" text-anchor="middle" font-size="12.5" fill="#334155">demoteStaleTasks：45 天未使用任务降权到 1（保留可见可解释）</text>
+<line x1="638.0" y1="785.0" x2="594.0" y2="785.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="772.0" text-anchor="middle" font-size="12.5" fill="#334155">mergeRedundant：候选聚类（词重叠 jaccard≥0.55 或向量余弦≥0.86）</text>
+<line x1="638.0" y1="797.5" x2="594.0" y2="797.5" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="784.5" text-anchor="middle" font-size="12.5" fill="#334155">callConsolidationModel：模型合并为一条（最多 3 个候选；forced 最多 8）</text>
+<line x1="638.0" y1="810.0" x2="1154.0" y2="810.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="797.0" text-anchor="middle" font-size="12.5" fill="#334155">write 新条目 + Supersede 旧条目（保留旧日期，可解释变更）</text>
+<rect x="56" y="866.0" width="1124" height="26" fill="#1e293b"/><text x="56" y="884.0" font-size="14" fill="#ffffff" font-weight="600">P3　向量补齐与一致性收尾</text>
+<line x1="638.0" y1="908.0" x2="1154.0" y2="908.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="895.0" text-anchor="middle" font-size="12.5" fill="#334155">backfillEmbeddings：补向量（每运行 200，分批排空积压）</text>
+<line x1="638.0" y1="924.7" x2="1154.0" y2="924.7" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="911.7" text-anchor="middle" font-size="12.5" fill="#334155">SyncVectorColumn：同步向量列（每运行 2000，无模型调用）</text>
+<line x1="638.0" y1="941.3" x2="1154.0" y2="941.3" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="896.0" y="928.3" text-anchor="middle" font-size="12.5" fill="#334155">MarkConsolidated / rebuildBlock：标记完成 / 重建 resident block</text>
+<line x1="78.0" y1="958.0" x2="594.0" y2="958.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="336.0" y="945.0" text-anchor="middle" font-size="12.5" fill="#334155">ConsolidateNow（手动 forced）：按 forced 阈值重新评审</text>
+<rect x="56" y="734" width="24" height="8" fill="#2563eb"/><text x="78" y="744" font-size="11.5" fill="#64748b">同步调用</text>
+<rect x="170" y="734" width="24" height="8" fill="#0d9488" stroke-dasharray="4 3"/><text x="192" y="744" font-size="11.5" fill="#64748b">异步/后台任务</text>
+<rect x="270" y="734" width="24" height="8" fill="#7c3aed"/><text x="292" y="744" font-size="11.5" fill="#64748b">关键步骤</text>
+</svg></div>
+  </div>
+</section>
+
+<section class="flow-card">
+  <div class="cap"><span class="idx">图 6</span>P1　范围解析与开关检查（每次读写前，统一谓词）</div>
+  <div class="body">
+    <div class="svgbox"><svg viewBox="0 0 1240 760" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,\"PingFang SC\",\"Microsoft YaHei\",sans-serif">
+
+  <defs>
+    <marker id="mk_solid" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#2563eb"/>
+    </marker>
+    <marker id="mk_async" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#0d9488" stroke="#0d9488" stroke-dasharray="4 3"/>
+    </marker>
+    <marker id="mk_highlight" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+<rect x="-14.0" y="10" width="140" height="30" rx="8" fill="#eff6ff" stroke="#94a3b8" stroke-width="1"/><text x="56.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">请求方（用户/Agent）</text>
+<line x1="56.0" y1="40" x2="56.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="359.3" y="10" width="140" height="30" rx="8" fill="#f5f3ff" stroke="#94a3b8" stroke-width="1"/><text x="429.3" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">记忆服务 Service</text>
+<line x1="429.3333333333333" y1="40" x2="429.3333333333333" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="732.7" y="10" width="140" height="30" rx="8" fill="#f0fdfa" stroke="#94a3b8" stroke-width="1"/><text x="802.7" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">存储层 Repository</text>
+<line x1="802.6666666666666" y1="40" x2="802.6666666666666" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="1106.0" y="10" width="140" height="30" rx="8" fill="#fef2f2" stroke="#94a3b8" stroke-width="1"/><text x="1176.0" y="31" text-anchor="middle" font-size="12.5" fill="#1e293b" font-weight="600">后台任务与队列（asynq）</text>
+<line x1="1176.0" y1="40" x2="1176.0" y2="704" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 3"/>
+<rect x="56" y="96" width="1124" height="26" fill="#1e293b"/><text x="56" y="114" font-size="14" fill="#ffffff" font-weight="600">P1　范围解析与开关检查（每次读写前，统一谓词）</text>
+<line x1="78.0" y1="138.0" x2="407.3" y2="138.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="242.7" y="125.0" text-anchor="middle" font-size="12.5" fill="#334155">ResolveScope：从请求上下文解析 TenantID + Principal.StorageID（不信任客户端 id）</text>
+<line x1="451.3" y1="662.0" x2="780.7" y2="662.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="649.0" text-anchor="middle" font-size="12.5" fill="#334155">enabledScope：三级开关检查（workspace MemoryConfig → user Enabled → agent 偏好）</text>
+<rect x="56" y="718.0" width="1124" height="26" fill="#1e293b"/><text x="56" y="736.0" font-size="14" fill="#ffffff" font-weight="600">P2　写入一致性保障（事务 + 替换关系 + 围栏）</text>
+<line x1="451.3" y1="760.0" x2="407.3" y2="760.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="429.3" y="747.0" text-anchor="middle" font-size="12.5" fill="#334155">captureGeneration：刷新 generation 围栏（写入前）</text>
+<line x1="451.3" y1="785.0" x2="780.7" y2="785.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="772.0" text-anchor="middle" font-size="12.5" fill="#334155">SaveItemWithPendingLimit：事务保存 + replaces_id 替换关系 + 唯一索引（scope+fingerprint）</text>
+<line x1="451.3" y1="810.0" x2="780.7" y2="810.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="797.0" text-anchor="middle" font-size="12.5" fill="#334155">enforceCapacity：超限归档最低排名</text>
+<rect x="56" y="866.0" width="1124" height="26" fill="#1e293b"/><text x="56" y="884.0" font-size="14" fill="#ffffff" font-weight="600">P3　遗忘、租约与清除保障</text>
+<line x1="78.0" y1="908.0" x2="407.3" y2="908.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="242.7" y="895.0" text-anchor="middle" font-size="12.5" fill="#334155">DeleteItem/Clear：遗忘——记录 tombstone 后删除</text>
+<line x1="451.3" y1="920.5" x2="780.7" y2="920.5" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="907.5" text-anchor="middle" font-size="12.5" fill="#334155">AddTombstone：记录遗忘指纹 + 来源消息（双重抑制重蒸馏）</text>
+<line x1="451.3" y1="933.0" x2="407.3" y2="933.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="429.3" y="920.0" text-anchor="middle" font-size="12.5" fill="#334155">HasTombstone / HasTombstoneForMessage：检查是否被遗忘（写入前拦截）</text>
+<line x1="1198.0" y1="945.5" x2="407.3" y2="945.5" stroke="#0d9488" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#mk_async)"/>
+<text x="802.7" y="932.5" text-anchor="middle" font-size="12.5" fill="#334155">Handle：claim 租约串行化 + 重投递等待租约过期恢复</text>
+<line x1="451.3" y1="958.0" x2="780.7" y2="958.0" stroke="#2563eb" stroke-width="1.6" marker-end="url(#mk_solid)"/>
+<text x="616.0" y="945.0" text-anchor="middle" font-size="12.5" fill="#334155">Clear：按 status 分批记墓碑 + 删除全部 + 保留开关与提取游标</text>
+<rect x="56" y="734" width="24" height="8" fill="#2563eb"/><text x="78" y="744" font-size="11.5" fill="#64748b">同步调用</text>
+<rect x="170" y="734" width="24" height="8" fill="#0d9488" stroke-dasharray="4 3"/><text x="192" y="744" font-size="11.5" fill="#64748b">异步/后台任务</text>
+<rect x="270" y="734" width="24" height="8" fill="#7c3aed"/><text x="292" y="744" font-size="11.5" fill="#64748b">关键步骤</text>
+</svg></div>
+  </div>
+</section>
+<div class="note good">图例说明：<strong>实线</strong>为同步调用（请求/编排/存储/向量）；<strong>虚线</strong>为异步后台任务（asynq 队列、租约释放）；<strong>高亮</strong>标记关键步骤。所有时序均以「调用方 → 记忆服务 → 存储/向量层」为主流，后台任务层通过 asynq 队列与租约与主流程解耦。</div>
+</section>
+<section>
+<h2><span class="num">5</span>关键机制说明</h2>
+<div class="grid g4">
+<div class="card"><div class="t">范围隔离与开关（三级）</div><div class="d">ResolveScope 从请求上下文解析 TenantID + Principal.StorageID，作用域不信任客户端传入；enabledScope 依次检查 workspace MemoryConfig → 用户 Enabled → agent 偏好，任一关闭即降级为「无记忆」，读路径永不报错。</div></div>
+<div class="card"><div class="t">写入一致性（统一 writeReplacing）</div><div class="d">显式写入与后台蒸馏都走同一 writeReplacing：先清洗、再脱敏（敏感字段替换为占位符）、校验 kind、做遗忘与冲突检查，再保存、强制容量、重建 resident block、存向量。保证清洗/脱敏/冲突/容量/向量不会因调用方不同而绕过。</div></div>
+<div class="card"><div class="t">遗忘与防重蒸馏（双重墓碑）</div><div class="d">删除/清除只记录 topic + 内容指纹 + 来源消息的墓碑，不删除正文；写入前用指纹与来源消息双重检查，抑制「用户删除后后台重新蒸馏出同样内容」的重现；墓碑上限 MaxMemoryTombstones=500，超限丢弃最旧。</div></div>
+<div class="card"><div class="t">推断与确认（pending）</div><div class="d">系统推断的关于用户的记忆（inferred）进入 pending 状态，不注入 prompt、不静默生效，必须用户确认才正式启用；拒绝则删除并记录墓碑，避免同一猜测再次被提出。</div></div>
+<div class="card"><div class="t">容量治理（自动遗忘）</div><div class="d">enforceCapacity 在主体超出容量上限时归档最低排名的活跃条目；待确认条目另有 pendingLimit 保护；已注入使用的条目通过 touchAsync 计入，避免不可达条目长期占位。</div></div>
+<div class="card"><div class="t">语义与词法融合（降级安全）</div><div class="d">召回同时走词法打分与向量 RRF 融合，词法池随当前容量上限动态扩展；minCosine=0.5 过滤零匹配；读侧 embed 超时（2s）自动降级为纯词法匹配，保证首 token 不被阻塞。</div></div>
+<div class="card"><div class="t">后台蒸馏可靠性</div><div class="d">ScheduleExtraction 只排队不丢消息（turn 始终记录，定时器只决定何时执行）；Handle 用租约串行化并发、watermark 推进会话、分段按 1h 静默切分、截断输出重试、命中上限后排队跟进任务、释放租约后由重投递恢复。</div></div>
+<div class="card"><div class="t">整库整合与一致性收尾</div><div class="d">每日（24h）或手动（1min）触发整库整合：过期归档、45 天未使用任务降权、近重复聚类后交给模型合并、补向量、同步向量列、重建 block；合并采用「写新+supersede 旧」保留旧日期可解释变更。</div></div>
+</div>
+</section>
+<section>
+<h2><span class="num">6</span>质量保障与测试</h2>
+<div class="grid g4">
+<div class="card"><div class="t">测试覆盖</div><div class="d">service_test、extract_test、lexical_test、vector_test、search_test、topic_resolve_test、consolidate_test、consistency_test、regression_test、coverage_test、admin_test 等，覆盖写入、读取、主题解析、整合、向量、管理全路径。</div></div>
+<div class="card"><div class="t">一致性测试（专门保障）</div><div class="d">事务回滚（失败替换不得留下新行）、租约恢复保留进度、重投递等待崩溃 worker 租约、迁移恢复 legacy pending、消息分页不重复、墓碑边界等；并包含 Postgres 迁移恢复测试。</div></div>
+<div class="card"><div class="t">可靠性保障</div><div class="d">结构化输出解析（容忍代码块/杂文本）、截断重试、模型不可用降级、范围缺失即丢弃、队列/租约异常不阻塞正式数据、敏感内容脱敏与「几乎全被脱敏则丢弃」双重保护。</div></div>
+<div class="card"><div class="t">质量门禁</div><div class="d">回归测试、覆盖率测试、一致性测试、迁移测试共同构成质量保障；所有关键路径均有可核对的测试与日志埋点。</div></div>
+</div>
+</section>
+<section>
+<h2><span class="num">7</span>结论与落地建议</h2>
+<p><strong>结论：</strong>WeKnora 的记忆系统是面向个人长期记忆的完整子系统，具备「范围隔离、读写双路径、后台蒸馏、整库整合、一致性保障」的完整闭环，读路径零模型调用、写入路径统一且可审计、遗忘与推断可精确控制、后台任务有租约与队列保障、一致性有专门测试与迁移保障，在个人化检索与跨会话一致性场景下设计完整，且具备良好的可维护性与可降级性。</p>
+<p class="sub">后续可关注的方向（基于代码演进点）：</p>
+<ul><li>向量回填与向量列同步可按主体分片批量推进，进一步降低大容量主体的维护成本；</li><li>整合合并的候选上限与合并阈值可按主体规模动态调整，平衡合并收益与模型调用成本；</li><li>词法召回池随容量动态扩展（当前固定为当前容量上限），可进一步优化大容量主体下的召回覆盖；</li><li>主题解析的 tier3 模型裁决可增加缓存，减少重复的模型往返。</li></ul>
+</section>
+<section>
+<h2><span class="num">附录</span>证据索引（可核对）</h2>
+<div class="tbl-wrap"><table><thead><tr><th>类别</th><th>文件 / 迁移</th><th>与记忆系统的关系</th></tr></thead><tbody>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/service.go</td><td>写入/读取/主题/整合/管理主流程</td></tr>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/extract.go</td><td>背景蒸馏：ScheduleExtraction/Handle/applyDecisions/主题观察</td></tr>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/lexical.go</td><td>词法匹配与打分（tokenize/三级匹配/预算截断）</td></tr>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/vector.go</td><td>向量检索/RRF 融合/回填/向量同步/向量失效</td></tr>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/search.go</td><td>按需检索 SearchMemory</td></tr>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/topic_resolve.go</td><td>主题解析 tier1-3 与合并裁决</td></tr>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/consolidate.go</td><td>整库整合：过期/降权/合并/回填/同步</td></tr>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/recall_trace.go</td><td>召回融合追踪与候选合并</td></tr>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/scope.go</td><td>范围解析与 generation 围栏</td></tr>
+<tr><td><strong>核心服务</strong></td><td>internal/application/service/memory/admin.go</td><td>管理员接口（主体/条目/确认/拒绝/清除/开关）</td></tr>
+<tr><td><strong>接口定义</strong></td><td>internal/types/interfaces/memory.go</td><td>MemoryService / MemoryRepository / MemoryItem / 存储结构契约</td></tr>
+<tr><td><strong>类型定义</strong></td><td>internal/types/memory.go</td><td>记忆种类/状态/来源、主体/条目/主题/墓碑/亲和度/向量类型、配置与默认值</td></tr>
+<tr><td><strong>存储实现</strong></td><td>internal/application/repository/memory*.go</td><td>存储层实现（事务、替换关系、唯一索引、向量读写）</td></tr>
+<tr><td><strong>存储迁移</strong></td><td>migrations/versioned/000084_memory.up.sql / .down.sql</td><td>记忆存储表与索引结构</td></tr>
+<tr><td><strong>一致性迁移</strong></td><td>migrations/versioned/000094_memory_consistency.up.sql / .down.sql</td><td>一致性结构（替换索引、提取会话、迁移恢复）</td></tr>
+<tr><td><strong>接入层</strong></td><td>internal/application/service/chat_pipeline/memory_recall.go</td><td>插件 MemoryRecall 注入系统提示</td></tr>
+<tr><td><strong>接入层</strong></td><td>internal/application/service/chat_pipeline/memory_affinity.go</td><td>插件 MemoryAffinity 文档亲和度加权 reranker</td></tr>
+</tbody></table></div>
+</section>
+</div>
+</body>
+</html>
