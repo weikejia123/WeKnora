@@ -109,3 +109,15 @@ git log --oneline 450b6ed1..upstream/main | wc -l          # 428
 git diff --name-status upstream/main..wkj-dev | wc -l      # 974（我方差异面）
 diff -rq frontend my-frontend --exclude=node_modules       # 应仅剩 dist/node_modules 级产物
 ```
+
+## 7. 部署记录（111，2026-11-03）
+
+- [x] **备份**：用当日 cron 快照 `/mnt/data/backups/weknora/20261103-060001`（06:00 完成，早于本次变更）。
+- [x] **已部署**（11:10–11:55，`deploy-wkj-dev.sh`）：
+  1. `push-app` —— 111 编译镜像重编 app 二进制（anydoc 增量 21s + Go 全量），投递 `.build/WeKnora`（commit `5641eae7` 命中 7 处）；重启 app ⇒ **迁移 120→135 一次通过**，无 dirty。
+  2. `push-ui` —— 本地构建 my-frontend v0.9.0（23M），rsync 到 `/mnt/data/weknora/my-frontend/dist`，容器内标记 `w="5641eae"` 命中。
+  3. `push-reader` —— docreader 源码同步 + 重启。
+  4. `update` —— **pull 官方 v0.9.0 新基镜像**（app 新增 `qpdf`、docreader 新增 `rapidocr/onnxruntime/opencv`，旧镜像均缺 ⇒ 必须换新基）并重建 app/docreader/frontend；searxng-init 顺带重跑。
+- **验收**：41200（官方前端）/ 41280（定制前端）均 **200**；app / docreader / frontend-wkj healthy；`schema_migrations` max=**135**、dirty=f；`qpdf` 在位、`import rapidocr/onnxruntime/cv2` OK。
+- ⚠️ **踩坑（复发）**：前端容器重建后换了 IP，`weknora-nginx`（2 周未重建）DNS 缓存旧 IP ⇒ 41280 全 502；`docker restart weknora-nginx` 刷新解析即愈。与第 12 轮「app 重建致前端内嵌 nginx DNS 过期」同族 —— **容器组里任何成员重建后，未重建的 nginx/代理都要重启一遍**。
+- [x] gitea / gitea111 已推（`5641eae7c`）；未推 origin（GitHub fork）。
