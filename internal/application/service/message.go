@@ -12,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // regThinkIndex matches <think>...</think> blocks for stripping from KB index content.
@@ -189,6 +190,20 @@ func (s *messageService) GetRecentMessagesBySession(ctx context.Context,
 
 	logger.Infof(ctx, "Retrieved %d recent messages successfully", len(messages))
 	return s.clarifyReadArtifactVersions(ctx, sessionID, messages), nil
+}
+
+// GetRecentUserMessages returns a session's latest user messages, oldest first.
+func (s *messageService) GetRecentUserMessages(
+	ctx context.Context, sessionID string, limit int,
+) ([]*types.Message, error) {
+	tenantID, ok := sessionTenantIDForLookup(ctx)
+	if !ok {
+		return nil, errors.New("workspace ID not found in context")
+	}
+	if _, err := loadSessionForRead(ctx, s.sessionRepo, tenantID, sessionUserIDForLookup(ctx), sessionID); err != nil {
+		return nil, err
+	}
+	return s.messageRepo.GetRecentUserMessages(ctx, sessionID, limit)
 }
 
 // GetMessagesBySessionBeforeTime retrieves messages sent before a specific time
@@ -587,7 +602,8 @@ func normalizeArtifactFileTypes(in []string) []string {
 // SearchMessages searches messages by keyword and/or vector similarity across all sessions of the current tenant.
 // Vector search is delegated to the chat history knowledge base's HybridSearch (configured via ChatHistoryConfig).
 func (s *messageService) SearchMessages(ctx context.Context, params *types.MessageSearchParams) (*types.MessageSearchResult, error) {
-	logger.Infof(ctx, "Start searching messages, query: %s, mode: %s", params.Query, params.Mode)
+	logger.Infof(ctx, "Start searching messages, query: %s, mode: %s",
+		secutils.SanitizeForLog(params.Query), secutils.SanitizeForLog(string(params.Mode)))
 
 	tenantID := types.MustTenantIDFromContext(ctx)
 

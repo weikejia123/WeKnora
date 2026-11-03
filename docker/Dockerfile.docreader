@@ -86,6 +86,10 @@ RUN chmod +x docreader/scripts/generate_proto.sh && \
 # =========================
 FROM python:3.10.18-bookworm AS runner
 
+ARG VERSION_ARG=unknown
+ARG COMMIT_ID_ARG=unknown
+ENV DOCREADER_VERSION=${VERSION_ARG} DOCREADER_COMMIT_ID=${COMMIT_ID_ARG}
+
 ARG APT_MIRROR=""
 # GitHub 访问加速前缀（可选，留空 = 直连 github.com）；说明见 builder 阶段
 ARG GH_PROXY=""

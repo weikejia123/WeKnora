@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"sort"
 	"strconv"
@@ -79,7 +80,11 @@ func (op Operation) Build(params map[string]json.RawMessage) (Call, error) {
 			}
 			continue
 		}
-		value, err := decodeParam(p, raw)
+		// Manual knowledge content is a complete Markdown document; trimming its
+		// edges can change an indented first code block or a final hard break.
+		preserveContent := p.In == InBody && p.wireKey() == "content" &&
+			(op.ID == "knowledge.create_manual" || op.ID == "knowledge.update_manual")
+		value, err := decodeParam(p, raw, preserveContent)
 		if err != nil {
 			return Call{}, err
 		}
@@ -108,11 +113,15 @@ func (op Operation) Build(params map[string]json.RawMessage) (Call, error) {
 				query.Set(p.wireKey(), v)
 			case int64:
 				query.Set(p.wireKey(), strconv.FormatInt(v, 10))
+			case float64:
+				query.Set(p.wireKey(), strconv.FormatFloat(v, 'f', -1, 64))
 			case bool:
 				query.Set(p.wireKey(), strconv.FormatBool(v))
 			}
 		case InBody:
-			body[p.wireKey()] = value
+			if err := assignBody(body, p.wireKey(), value); err != nil {
+				return Call{}, err
+			}
 		}
 	}
 
@@ -128,6 +137,35 @@ func (op Operation) Build(params map[string]json.RawMessage) (Call, error) {
 		call.Body = encoded
 	}
 	return call, nil
+}
+
+// assignBody writes value at a dotted JSON path, creating objects along the way.
+func assignBody(body map[string]any, key string, value any) error {
+	parts := strings.Split(key, ".")
+	cursor := body
+	for _, part := range parts[:len(parts)-1] {
+		if part == "" {
+			return fmt.Errorf("body field %q has an empty path segment", key)
+		}
+		existing, ok := cursor[part]
+		if !ok {
+			next := map[string]any{}
+			cursor[part] = next
+			cursor = next
+			continue
+		}
+		next, ok := existing.(map[string]any)
+		if !ok {
+			return fmt.Errorf("body field %q conflicts with another field", key)
+		}
+		cursor = next
+	}
+	leaf := parts[len(parts)-1]
+	if leaf == "" {
+		return fmt.Errorf("body field %q has an empty path segment", key)
+	}
+	cursor[leaf] = value
+	return nil
 }
 
 // SelectParams keeps the parameters op accepts.
@@ -166,18 +204,20 @@ func isJSONNull(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
-func decodeParam(p Param, raw json.RawMessage) (any, error) {
+func decodeParam(p Param, raw json.RawMessage, preserveContent bool) (any, error) {
 	switch p.Type {
 	case TypeString:
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
 			return nil, paramErr(p.Name, "must be a string")
 		}
-		s = strings.TrimSpace(s)
+		if !preserveContent {
+			s = strings.TrimSpace(s)
+		}
 		if err := validateString(p, s); err != nil {
 			return nil, err
 		}
-		if s == "" && p.Required && !p.AllowEmpty {
+		if strings.TrimSpace(s) == "" && p.Required && !p.AllowEmpty {
 			return nil, paramErr(p.Name, "must not be empty")
 		}
 		return s, nil
@@ -234,6 +274,15 @@ func decodeParam(p Param, raw json.RawMessage) (any, error) {
 		return out, nil
 	case TypeInteger:
 		return decodeInteger(p, raw)
+	case TypeNumber:
+		if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] == '"' {
+			return nil, paramErr(p.Name, "must be a number")
+		}
+		var f float64
+		if err := json.Unmarshal(raw, &f); err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil, paramErr(p.Name, "must be a number")
+		}
+		return f, nil
 	case TypeBoolean:
 		var b bool
 		if err := json.Unmarshal(raw, &b); err != nil {
