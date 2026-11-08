@@ -77,7 +77,7 @@
   （脚本自动从 `scripts/browserskill-release.json` 读 pinned 版本，无需改脚本）。
 - **无新 compose 变量**：官方 `docker-compose.yml` 本轮零改动；overlay 与 `.env` **无需改动**。
   `.env.example` 只有 `BROWSERSKILL_EXTENSION_PATH` 注释的版本号变化。
-- **前端**：官方动 `frontend/` **22 文件**（含 7 个新增）。`my-frontend` 为逐字副本 ⇒ 已
+- **前端**：官方动 `frontend/` **22 文件**（含 6 个新增）。`my-frontend` 为逐字副本 ⇒ 已
   `rsync` 同步后 `diff -rq` 仅剩 `dist` / `node_modules` 两项产物差异（= 0 实质差异）。
 
 ## 4. 例外 Dockerfile 的必要性判断（合并后重判）
