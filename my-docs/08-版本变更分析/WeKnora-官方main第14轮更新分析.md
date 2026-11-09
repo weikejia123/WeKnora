@@ -119,3 +119,48 @@ git diff --name-status upstream/main..HEAD | wc -l    # 1173（我方差异面�
 - 合并前工作树有一批**已暂存但未提交**的 `my-docs` 目录重整（`91-深度使用说明` → `83-实际使用`），
   阻塞了 merge（`merge` 报 "local changes would be overwritten"，因 rename 的删除侧未落盘）。
   已先行提交为 `46afb1e31`，再执行合并 —— 该提交即本轮**回滚点**。
+
+## 8. 部署记录（111，2026-11-09）
+
+- [x] **备份**：部署前手动快照 `20261109-053120`（db 154M + data-files 124M，`pg_restore -l` 与 `tar` 均校验通过），
+  早于本次变更。上一份为 11-08 06:00 定时快照。
+- [x] **push-app**（05:36–05:37）：111 编译镜像编译 → `.build/WeKnora`（279M，commit `41f55bbf` 命中 7 处）→ 重启 app。
+- [x] **迁移 000136 一次通过**：`135 → 136`，`dirty=false`，`credential_vault_items` 表与索引已建。
+  ⚠️ 脚本的 `check_migrations` 在迁移**执行窗口内**采样，会先报一次「135 ≠ 136」的假警报，日志复核后确认为误报。
+- [x] **push-ui**：本地构建 23M（208 个 assets）→ rsync 到 111，`index-*.js` 内命中 commit `41f55bb`。
+- [x] **build（关键，非可选）**：`Dockerfile.app` 里的 pinned 扩展与 bsk daemon 只存在于**镜像层**，
+  `push-app` 覆盖不到 ⇒ 必须重建 app 镜像才拿到 0.4.1。重建后镜像内确认为
+  `browser-skill-weknora-0.4.1.zip`，`BROWSERSKILL_EXTENSION_PATH` 同步指向它。
+- [x] **验收**：app / docreader / frontend-wkj / postgres / nginx 全 healthy；
+  41200 / 41280 / 41201 三个入口 **200**；`/api` 走前端返回 **401**（鉴权拦截，非 502 ⇒ 代理链路通）；
+  searxng 命中 15 条结果；neo4j Bolt 7687 可连；库版本 **136/false**。
+- [x] **踩坑（复发并已自愈）**：app 容器重建后两个前端启动时间早于 app ⇒ 内嵌 nginx 解析到旧 IP，
+  已按 `health_check` 同款判据 `docker restart` 两个前端，级联后 `/api` 恢复正常。
+
+### 8.1 本次部署的耗时归因（重要，下次别再误判为「网络慢」）
+
+| 阶段 | 实测 | 说明 |
+|---|---|---|
+| push-app 编译 | ~1 分钟 | 热缓存，`GLIBC` 需求 2.33–2.35（容器上限 2.36） |
+| `build` 的 browserskill 阶段 | 93s | 含 Rust 工具链 + BrowserSkill 源码编译 |
+| `build` 的 Go 全量编译 | **601s** | builder 阶段主要耗时 |
+| `build` 的镜像导出 | **~18 分钟** | ⚠️ 异常，正常应在分钟级 |
+| **总计** | **约 2 小时 15 分** | 首次 `build` 因外部干扰卡死 1h42m 后重跑 |
+
+**根因不是国内网络**：日志证明换源全部生效 —— `goproxy.cn`（10 处）、`rsproxy.cn`、
+`gh-proxy.com`、`npmmirror.com`、腾讯 apt 镜像。真正的瓶颈是：
+
+1. **Docker data-root 在机械盘** `/mnt/data`（sdb，16T，`ROTA=1`），导出 2.46GB 镜像层时
+   单线程写盘；同期还有**别人的两个构建**在同一块盘上抢 IO：
+   `viewer` 项目的 `chown -R app:app /app` 卡在 **D 状态 30+ 分钟**，`team-browser` 的 `--no-cache` 构建，
+   系统 IO pressure 长期 50%+。
+2. 首次 `build` 的 browserskill 阶段（外部源）卡死 1 小时 42 分无进展，杀掉重跑后 93s 即过 ——
+   属偶发，非配置问题。
+3. 并发 `docker compose up` 两次导致 docreader 容器删除互相争抢（`removal is already in progress`），
+   一度出现 `Dead` + `a02c5557a6ba_WeKnora-docreader` 残留；`--no-deps` 单独重建后恢复。
+
+**下次加速的可选项**（尚未实施，需评估）：
+- 把 Docker data-root 迁到 NVMe（`nvme0n1`，根盘 937G 仅用 35G，4%）
+  ⇒ 直接消除导出阶段的最大瓶颈。
+- `build` 只点名需要的服务（`docker compose build app`）而不是全量。
+- 避免在 111 上与其它项目构建并发；或给构建加 IO 优先级（`ionice`）。
