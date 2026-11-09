@@ -164,3 +164,35 @@ git diff --name-status upstream/main..HEAD | wc -l    # 1173（我方差异面�
   ⇒ 直接消除导出阶段的最大瓶颈。
 - `build` 只点名需要的服务（`docker compose build app`）而不是全量。
 - 避免在 111 上与其它项目构建并发；或给构建加 IO 优先级（`ionice`）。
+
+### 8.2 ⚠️ 部署后发现并修复的问题：`build` 只构建镜像，不重建前端容器
+
+**现象**（2026-11-09 09:10 复核时发现）：`./deploy-wkj-dev.sh build` 之后，
+`wechatopenai/weknora-ui` 与 `wechatopenai/weknora-ui-wkj` 两个 tag **已经指向新镜像**
+（05:55 构建），但 `WeKnora-frontend` / `WeKnora-frontend-wkj` 两个**容器仍在跑 11-03 的旧镜像 ID**。
+
+**判据**（部署后必查）：
+```bash
+# 容器实际镜像 ID 必须等于其 tag 当前指向的 ID
+docker inspect WeKnora-frontend --format '{{.Image}}'
+docker image inspect wechatopenai/weknora-ui:latest --format '{{.Id}}'
+```
+两者不等 ⇒ 页面跑的是旧构建。本次实测就是不等。
+
+**为什么容易漏判**：
+- 定制前端挂的是 `./my-frontend/dist` 卷，**内容是新投递的** ⇒ 页面看起来"是新的"；
+- 但**官方前端 41200 没有挂载**，静态文件全在镜像层 ⇒ 41200 仍是旧版
+  （实测：`grep -rl credential-vault` 在 `WeKnora-frontend` 内为 0 命中，定制前端有命中）。
+- 结果就是两个入口不一致，且 41200 缺第 14 轮全部前端改动，**没有任何报错**。
+
+**根因**：`cmd_build()` = `sync_code → compose_up build → health_check`。
+`compose_up` 的 build 分支只跑 `$DC build`，随后 `health_check` 里对前端的兜底逻辑
+**仅在容器非 running 时才 `up -d`** ⇒ 容器本来就在跑，于是永远不会被重建。
+
+**已做的修复**：`up -d --no-deps frontend frontend-wkj` 重建两个容器 → 两者均含
+`credential-vault` 代码、commit 命中 `41f55bb`；再由 `docker restart weknora-nginx`
+刷新上游 DNS（前端重建换 IP）。复核四个容器**镜像 ID 与 tag 全部一致**。
+
+**建议**（未改脚本，待定）：`build` 后应追加一次 `$DC up -d` 让容器跟上新镜像，
+或在 `health_check` 里把判据从「容器是否 running」改为「容器镜像 ID 是否等于 tag 当前 ID」。
+后者更准，且能同时覆盖 app / docreader。
