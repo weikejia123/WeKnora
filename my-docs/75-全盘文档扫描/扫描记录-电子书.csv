@@ -1,0 +1,9 @@
+﻿全路径,文件名,扩展名,类别,大小字节,可读大小,MD5,创建时间,修改时间,行数,同MD5副本数
+/Users/weikejia/CODE/my-agent-group/projects/my-forks/abogen/tests/fixtures/abogen_debug_tts_samples.epub,abogen_debug_tts_samples.epub,epub,电子书,3461,3.4KB,9eb3389a448d1e1cbb967933e09660aa,2026-07-02 03:34:20,2026-07-02 03:34:20,,0
+/Users/weikejia/CODE/my-agent-group/projects/ocr/markitdown/packages/markitdown/tests/test_files/test.epub,test.epub,epub,电子书,2677,2.6KB,fbe8a4fccb4defb63432dc50ea749639,2026-07-03 02:45:40,2026-07-03 02:45:40,,0
+/Users/weikejia/CODE/my-agent-group/projects/open/lobe-chat/packages/file-loaders/test/fixtures/test.epub,test.epub,epub,电子书,3683,3.6KB,7f7cb8eb676103f36b0f77c8d4acc0e7,2025-10-19 01:58:02,2025-10-19 01:58:02,,3
+/Users/weikejia/CODE/my-agent-group/projects/rag-tools/WeKnora/internal/infrastructure/docparser/anydoc/testdata/upstream/epub/book.epub,book.epub,epub,电子书,6167,6.0KB,a6a314a545539b5d5e0c8aa7b661ac04,2026-10-01 00:17:26,2026-10-01 00:17:26,,0
+/Users/weikejia/CODE/my-agent-group/projects/rag-tools/WeKnora/internal/infrastructure/docparser/anydoc/testdata/upstream/epub/handmade-math.epub,handmade-math.epub,epub,电子书,1350,1.3KB,8c5697f502b68c3c2d535b5e26b6f879,2026-10-01 00:17:26,2026-10-01 00:17:26,,0
+/Users/weikejia/CODE/my-agent-group/projects/rsi-agent/harness2/runs/pi-compose/pi-zig/runs/piproj-pi-agg1/run-tests/context/agg1/source/zig-pkg/N-V-__8AAJ2cNgAgfBtAw33Bxfu1IWISDeKKSr3DAqoAysIJ/contrib/dotzlib/DotZLib.chm,DotZLib.chm,chm,电子书,72726,71.0KB,87982cfd077364bc596aecebb7668297,2026-10-25 11:41:05,2026-10-25 11:41:05,,4
+/Users/weikejia/CODE/同步文件夹/开发工具/spy++/spyxx.chm,spyxx.chm,chm,电子书,115559,112.9KB,58fa91f58e3a551bbb32cfd38ee8ab1b,2025-02-08 21:15:13,2025-02-08 21:15:13,,1
+/Users/weikejia/CODE/同步文件夹/驱动/惠普D1380打印机/D1380MFDriversV2095W64ZH/DRIVERS/simplified_chinese/x64/misc/Ext/PMon/CNCENPMC.chm,CNCENPMC.chm,chm,电子书,18450,18.0KB,462a358282c97564327ae436899a6491,2025-02-08 21:21:50,2025-02-08 21:21:50,,0

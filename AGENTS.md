@@ -92,4 +92,5 @@
 | 接入层 TLS / WSS / 证书 | `my-docker/nginx/README.md` |
 | 部署 / 构建 / 差异复核命令 | `deploy/deploy-wkj-dev.sh` |
 | 数据安全 / 备份 / 迁移触发时机 | `my-docs/11-数据安全与备份/WeKnora-数据安全与备份方案.md` |
+| LLM 模型配置位全量清单 / 换引用自动化流程 | `my-docs/18-LLM模型配置与自动化/` |
 | 分析 / 决策 / 验收记录 | `my-docs/` |
