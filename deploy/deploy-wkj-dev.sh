@@ -348,6 +348,46 @@ _check_url_ok() {
   return 0
 }
 
+# ★ inode 预检（2026-11-26 实测新增）—— 与下面的「构建源」预检同属「把失败挡在 40 分钟之前」。
+#
+# 为什么必需：111 的 Docker data-root 在 /mnt/data（机械盘，ext4 仅 381 万 inode），
+# 而 build 要同时解压 browserskill（Rust+pnpm）、app builder（Go+cgo+Rust）、
+# docreader（uv sync 数百个 Python 包）⇒ 一次就吃掉十几万 inode。
+# 实测踩到（第 15 轮）：df -h 显示 14T 可用 / 9% 已用，但 **df -i 已 100%**，
+# 构建在 Go 编译与 uv sync 阶段报几十行 `no space left on device` 后失败 ——
+# 极具欺骗性（"磁盘明明没满"）。当时的 inode 占用：
+#   /mnt/data/containerd 3,055,210（Docker 镜像层 + BuildKit 快照，绝对主因）
+#   /mnt/data/docker       911,717
+# ⇒ 所以只看磁盘空间是不够的，必须单独看 inode。
+#
+# 判据取 5%：pip/npm/cargo 解压几千个小包是常事，余量太小会在中途撞顶；
+# 而 prune 本身在机械盘上很慢（实测 20 分钟），宁可提前拦住让人先清理。
+_ensure_inode_headroom() {
+  local pct avail
+  pct=$(df -i "$DIR" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+  avail=$(df -i "$DIR" 2>/dev/null | awk 'NR==2 {print $4}')
+  if [ -z "$pct" ]; then
+    echo "    · 取不到 inode 信息，跳过预检（不阻断构建）"
+    return 0
+  fi
+  if [ "$pct" -ge 95 ]; then
+    echo ""
+    echo "    ✘ inode 已用 ${pct}%（空闲 ${avail}）—— 构建极可能中途报"
+    echo "      'no space left on device'，而此时 df -h 仍显示磁盘大量空闲。"
+    echo "      这是 inode 耗尽，不是空间不足。先清理构建缓存："
+    echo "        ssh $SSH_HOST 'docker builder prune -f --filter until=24h'"
+    echo "        ssh $SSH_HOST 'df -i /mnt/data'    # 确认 IFree 回到足够量"
+    echo "      实测该 prune 在机械盘上约需 20 分钟（逐文件 unlink），请耐心等待。"
+    echo ""
+    echo "      ★ 先自查：本轮是否真的需要 build？若官方 docker/ 与"
+    echo "        scripts/browserskill-release.json 均未变，用 push-app / push-ui /"
+    echo "        push-reader 即可（镜像基座没变就不必重建），耗时从小时级降到分钟级。"
+    echo ""
+    exit 1
+  fi
+  echo "    ✔ inode 余量充足（已用 ${pct}%，空闲 ${avail}）"
+}
+
 _preflight_build_sources() {
   local apt apk goproxy npm rc=0
   apt=$($DC config 2>/dev/null | awk '/^ *APT_MIRROR:/{print $2; exit}')
@@ -473,6 +513,7 @@ _build_with_version() {
 
 if [ "$MODE" = "build" ]; then
   echo "  构建镜像（二开模式，耗时较长，可能 20-40 分钟）..."
+  _ensure_inode_headroom
   _build_with_version
 elif [ "$MODE" = "up" ]; then
   # 只按当前编排重建容器：不 pull、不 build。

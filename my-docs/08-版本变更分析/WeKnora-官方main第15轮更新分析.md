@@ -17,6 +17,8 @@
 | `go build ./...` | **exit=0**（仅既有 sqlite3 deprecation / `-lc++` 重复库警告） |
 | 前端构建 | `my-frontend` `npm run build` **exit=0**（19.56s） |
 | 合并提交 | `dfa3c6e11`；回滚点 = 合并前 `959684c61` |
+| 111 部署 | **完成**，库版本 `137/f`，四个容器镜像 ID 全部与 tag 一致（§6.2） |
+| 部署耗时 | **约 12 分钟**（放弃 `build`，改走 push-app / push-ui / push-reader —— 理由见 §6.1） |
 
 ### 1.1 为什么本轮零冲突（值得记住的判据）
 
@@ -164,25 +166,113 @@ diff -q docker-compose.yml <(git show upstream/main:docker-compose.yml)  # 一�
 - [x] **代码同步**：`deploy-wkj-dev.sh sync` → 111 到 `1a380279d`；`migrations/versioned/000137`、
   `migrations/sqlite/000053` 已就位。
 - [x] **合并 commit**：`dfa3c6e11`（merge）+ `1a380279d`（my-frontend 同步）。
-- [ ] **build**（镜像重建）：进行中，见 §6.1。
-- [ ] **迁移 000137**：随 app 启动执行，需核对 136 → 137、`dirty=false`。
-- [ ] **验收**：见 §6.2。
+- [x] **`build` 失败 → 改用 `push-app` 路径**：见 §6.1（**本轮最重要的教训**）。
+- [x] **push-app**（04:44–04:49）：编译镜像重建 → Rust anydoc `libanydoc_go.a`（26s）→ Go 全量编译
+  → `.build/WeKnora` 279M（commit `2028a3de` 命中 7 处）→ 重启 app。
+- [x] **迁移 000137 一次通过**：`136 → 137`，`dirty=false`，无需人工干预。
+- [x] **push-ui**（04:55）：本地构建 26M（216 assets，i18n 已拆成 6 个独立 locale chunk）
+  → rsync 到 111，容器内 216 个 assets。
+- [x] **前端镜像重建**：`build frontend frontend-wkj`（各 ~19s）+ `up -d --no-deps` 重建容器
+  —— **这一步不可省**，见 §6.2 第 1 条。重建后 `docker restart weknora-nginx` 刷新 DNS。
+- [x] **push-reader**（05:02）：docreader 重启加载新 parser（含新增 `csv_converter.py`）。
+- [x] **neo4j 重建**（05:04）：本轮官方新增 healthcheck，需重建容器才生效 → `healthy`。
+- [x] **验收**：见 §6.2，**全部通过**。
 
-### 6.1 部署执行过程
+### 6.1 ⚠️ 首次 `build` 失败：inode 耗尽（不是磁盘空间）
 
-（本节在 build 完成后回填实测耗时与结果。）
+**现象**：`./deploy-wkj-dev.sh build` 在 Go 编译与 docreader `uv sync` 阶段同时失败，报大量
+`no space left on device`，而 `df -h /mnt/data` 显示 **14T 可用 / 9% 已用** —— 极易误判为"磁盘没满，见鬼了"。
 
-### 6.2 验收清单（部署后逐条核对）
+**真正原因**：**inode 耗尽**。
 
-1. `docker inspect <container> --format '{{.Image}}'` 必须等于 `docker image inspect <tag> --format '{{.Id}}'`
-   —— **四个容器全查**（app / docreader / frontend / frontend-wkj）。
-   ⚠️ 第 14 轮 §8.2 踩过：`build` 只换 tag 不重建容器，两个前端会静默跑旧镜像。
-2. 库版本 `137/f`，`dirty=false`；`idx_channel_lookup` 定义里应出现 `thread_id = ''`。
-3. neo4j `docker inspect` 应出现 `healthy`（本轮新增 healthcheck）。**首次可能 `starting`，等 60s**。
-4. 三个入口 200：`41200`（官方前端 https）/ `41280`（定制前端 https）/ `41201`（app health）。
-5. 前端容器重建后**必须重启 nginx**（DNS 缓存旧 IP）；否则 `/api` 502/404 —— 这是老坑，每轮都会犯。
-6. 2560 维 HNSW 索引：升级后随便做一次检索，再查 `pg_indexes` 应出现 `embeddings_embedding_idx_2560`。
-7. `my-frontend/dist` 需重新 `push-ui` 投递（前端 i18n 拆包后 chunk 名全变了）。
+```bash
+df -i /mnt/data
+# Filesystem    Inodes   IUsed  IFree IUse% Mounted on
+# /dev/sdb1    3814912 3805667   9245  100% /mnt/data      ← 只剩 9245 个
+```
+
+**inode 去哪了**（`du -s --inodes` 实测）：
+
+| 路径 | inode 数 | 说明 |
+|---|---|---|
+| `/mnt/data/containerd` | **3,055,210** | ⚠️ 绝对主因：Docker 的镜像层与 BuildKit 快照（3 个 snapshotter 目录 + 2310 个 snapshots） |
+| `/mnt/data/docker` | 911,717 | docker rootfs / overlay / buildkit |
+| `/mnt/data/silo` | 311,496 | 与本项目无关 |
+| `/mnt/data/dsh-web` | 103,569 | 与本项目无关 |
+| `/mnt/data/litellm-langfuse` | 101,124 | 与本项目无关 |
+| `/mnt/data/weknora` | 11,185 | 本项目（含 `.build` / `migrations` / 前端 dist） |
+
+**为什么 build 特别吃 inode**：`docker compose build` 要跑 browserskill（Rust + pnpm）、
+app builder（Go 全量 + cgo + Rust anydoc）、docreader（uv sync 装数百个 Python 包）。
+三者各解压数万个小文件到 BuildKit 快照层，同时还有 102.6GB 历史构建缓存 ⇒ 一次就撞顶。
+
+**处置**（只动构建缓存，不碰运行中容器与数据）：
+
+```bash
+docker builder prune -f --filter until=24h    # 耗时约 20 分钟（机械盘，逐文件 unlink）
+# 效果：IUse% 100% → 94%，IFree 9,245 → 231,067（+24.9 万）
+docker image prune -f                          # 0B（无悬空镜像）
+```
+
+⚠️ **prune 期间 IO 打满、耗时远超预期**（机械盘 + 逐文件删除）。这本身就是
+「Docker data-root 在机械盘」的又一次实证（呼应第 14 轮 §8.1）。
+
+**由此得出的更重要结论**：**本轮根本不需要 `build`**。
+`build` 的意义是重建**镜像层**，而镜像层里只有两样东西是我们关心的：
+① `Dockerfile.app` 里 pinned 的 BrowserSkill 扩展（0.4.1）② `Dockerfile.docreader` 的 Python 依赖。
+本轮官方 `git diff --name-only e3fb2335b..b2c9edcd5 -- docker/` = **0**（两个 Dockerfile 一字未动），
+BrowserSkill pin 也仍是 `0.4.1`（`scripts/browserskill-release.json` 未变）。
+⇒ **镜像基座无需重建**，只需更新「外置的应用代码 + 外置迁移」，而 `push-app` /
+`push-ui` / `push-reader` 正是为此设计的。改用这三条路径后，总耗时从「2 小时+」降到
+**约 12 分钟**（push-app 5min + push-ui 1min + 前端镜像 40s + reader/neo4j 各 1min）。
+
+**判据（下次直接照做）**：
+
+```bash
+# 本轮是否需要 build？只看这两条 —— 都为 0/未变就不必 build
+git diff --name-only <上轮合并点>..<本轮> -- docker/ | wc -l     # 0 ⇒ 镜像基座没变
+git diff --name-only <上轮合并点>..<本轮> -- scripts/browserskill-release.json  # 空 ⇒ 扩展 pin 没变
+```
+
+⚠️ 但**前端镜像仍需重建**：`frontend/` 官方前端没有 bind mount，静态文件全在镜像层
+⇒ `push-ui` 只更新定制前端（`my-frontend/dist` 挂载），**41200 那侧必须重建镜像**。
+这一条与 inode 无关，是结构决定的。
+
+**根治建议（未实施）**：把 Docker data-root 从 `/mnt/data`（机械盘、381 万 inode）迁到
+根盘 NVMe（937G，4% 已用，ext4 inode 更多），或对 `/mnt/data` 重新 `mkfs` 提高 inode 数
+（需重挂载，风险高）。前者在第 14 轮 §8.1 就已列为加速项，本轮再次被 inode 撞出来。
+
+### 6.2 验收清单（部署后逐条核对，本轮全部通过）
+
+| # | 判据 | 实测 |
+|---|---|---|
+| 1 | 四个容器镜像 ID = tag 当前 ID | **全部 ✔ 一致**（app / docreader / frontend / frontend-wkj） |
+| 2 | 库版本 `137/f`、`dirty=false` | **137\|f** ✔ |
+| 3 | `idx_channel_lookup` 含 `thread_id = ''` | ✔ `WHERE ((deleted_at IS NULL) AND ((thread_id)::text = ''::text))` |
+| 4 | neo4j 有 healthcheck 且 healthy | ✔ `health=healthy`（重建前为 `NO_HEALTHCHECK`） |
+| 5 | 三个入口 200 | 41200 **200** / 41280 **200** / 41201 health **200** |
+| 6 | `/api` 走前端返回 401（非 502 ⇒ 代理链路通） | 41200 **401** / 41280 **401** ✔ |
+| 7 | 容器组全绿 | app/docreader/frontend-wkj/neo4j/postgres **healthy**；frontend 无 healthcheck 定义但 Up |
+| 8 | searxng 有结果（不只看 200） | **16 条** ✔ |
+| 9 | neo4j Bolt 7687 可连 | ✔ `BOLT_OK` |
+| 10 | 定制前端 assets 已投递 | 容器内 **216** 个（与官方前端同数） |
+| 11 | app 二进制内嵌 commit | 命中 **7 处**（`2028a3de`） |
+| 12 | 2560 维 HNSW 索引 | **尚未建立** —— 属预期，见下 |
+
+**第 12 条说明**：111 库里有 2560 维向量 **12882 条**（1024 维仅 5 条），而 pgvector 索引
+只有 1024 / 3584 / 798 三个维度。新代码的 `ensureHNSWIndex` 是**惰性**的 ——
+只在「首次写入或查询该维度」时于后台 `CREATE INDEX CONCURRENTLY`。
+所以升级完**不会**立刻出现 `embeddings_embedding_idx_2560`，要等第一次真实检索之后。
+⇒ **下次做一次检索后再查 `pg_indexes`**，若出现该索引即为生效；若没出现，看 app 日志的
+`[Postgres] HNSW index for 2560-dim embeddings: ...` 告警（会把失败原因与处置办法一起打出来）。
+
+### 6.3 遗留事项
+
+- **2560 维 HNSW 索引待触发**（见 §6.2 第 12 条）：需一次真实检索验证。
+- **Docker data-root 仍在机械盘 + inode 仅剩 23 万**：下一轮若还需 `build`，大概率再次撞顶。
+  根治方向见 §6.1 末段。
+- **`my-docs/75-全盘文档扫描/` 的 4 个大 CSV 未入库**（280MB，走 `.git/info/exclude`）：
+  别处 clone 后看不到，需回 111 或原机取。
 
 ## 7. 本轮顺带处理
 
